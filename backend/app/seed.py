@@ -8,8 +8,24 @@ def seed_data():
     # Create tables
     models.Base.metadata.create_all(bind=engine)
     
-    # Load JSON data
-    json_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../simba_products (1).json'))
+    # Try different paths for the JSON file (Local vs Render)
+    possible_paths = [
+        os.path.abspath(os.path.join(os.path.dirname(__file__), '../../simba_products (1).json')), # From app/
+        os.path.abspath(os.path.join(os.getcwd(), '../simba_products (1).json')), # From backend/ root
+        os.path.abspath(os.path.join(os.getcwd(), 'simba_products (1).json')) # Current dir
+    ]
+    
+    json_path = None
+    for path in possible_paths:
+        if os.path.exists(path):
+            json_path = path
+            break
+            
+    if not json_path:
+        print("Could not find simba_products (1).json")
+        return
+
+    print(f"Loading data from: {json_path}")
     with open(json_path, 'r') as f:
         data = json.load(f)
 

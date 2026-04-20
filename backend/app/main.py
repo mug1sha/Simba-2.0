@@ -11,6 +11,18 @@ models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Simba Backend API")
 
+@app.on_event("startup")
+def startup_event():
+    db = SessionLocal()
+    try:
+        # Check if store info exists
+        if not db.query(models.StoreInfo).first():
+            print("Database empty, starting auto-seed...")
+            from .seed import seed_data
+            seed_data()
+    finally:
+        db.close()
+
 # Allow configuring CORS via environment variables
 cors_origins = os.getenv("CORS_ORIGINS", "*").split(",")
 
