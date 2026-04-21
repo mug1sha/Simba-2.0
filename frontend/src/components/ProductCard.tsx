@@ -1,23 +1,56 @@
-import { Plus, Check } from "lucide-react";
+import { Plus, Check, Heart } from "lucide-react";
 import { useCart } from "@/contexts/CartContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { formatPrice, type Product } from "@/lib/products";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 
 const ProductCard = ({ product }: { product: Product }) => {
   const { addItem, items } = useCart();
+  const { token, user, isAuthenticated, refreshProfile } = useAuth();
+  const queryClient = useQueryClient();
   const [imgError, setImgError] = useState(false);
+  const [isFavoriting, setIsFavoriting] = useState(false);
+  
   const inCart = items.some((i) => i.id === product.id);
+  const isFavorite = user?.favorites?.some((f: any) => f.product_id === product.id);
+  
+  // Check for price drop
+  const favoriteData = user?.favorites?.find((f: any) => f.product_id === product.id);
+  const hasPriceDrop = favoriteData && product.price < favoriteData.original_price;
 
   const handleAdd = () => {
-    addItem({
-      id: product.id,
-      name: product.name,
-      price: product.price,
-      image: product.image,
-      unit: product.unit,
-    });
+    addItem({ ...product });
     toast.success(`${product.name} added to cart`, { duration: 1500 });
+  };
+
+  const toggleFavorite = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!isAuthenticated) return toast.info("Please login to save favorites");
+    
+    setIsFavoriting(true);
+    try {
+      if (isFavorite) {
+        await fetch(`/api/user/favorites/${product.id}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        toast.success("Removed from wishlist");
+      } else {
+        await fetch(`/api/user/favorites?product_id=${product.id}`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        toast.success("Added to wishlist");
+      }
+      await refreshProfile();
+      queryClient.invalidateQueries({ queryKey: ["user-favorites"] });
+    } catch (err) {
+      toast.error("Failed to update wishlist");
+    } finally {
+      setIsFavoriting(false);
+    }
   };
 
   return (
@@ -38,9 +71,46 @@ const ProductCard = ({ product }: { product: Product }) => {
         <span className="absolute top-3 left-3 bg-card/90 backdrop-blur-sm text-[10px] font-medium text-muted-foreground px-2.5 py-1 rounded-full border border-border/50">
           {product.category}
         </span>
+        
+        <button
+          onClick={toggleFavorite}
+          disabled={isFavoriting}
+          className={`absolute top-3 right-3 p-2 rounded-full backdrop-blur-md border transition-all ${
+            isFavorite 
+              ? "bg-red-500/20 border-red-500/30 text-red-500" 
+              : "bg-black/20 border-white/10 text-white hover:bg-black/40"
+          }`}
+        >
+          <Heart className={`w-4 h-4 ${isFavorite ? "fill-current" : ""}`} />
+        </button>
+
+        {hasPriceDrop && (
+          <div className="absolute bottom-3 left-3 bg-green-500/90 text-white text-[10px] font-bold px-2 py-1 rounded shadow-lg animate-pulse">
+            🔥 PRICE DROP
+          </div>
+        )}
+
         {!product.inStock && (
-          <div className="absolute inset-0 bg-foreground/50 flex items-center justify-center">
-            <span className="bg-card text-foreground text-sm font-medium px-3 py-1 rounded-full">Out of Stock</span>
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] flex flex-col items-center justify-center p-4 text-center">
+            <span className="bg-white/10 text-white text-[10px] font-bold px-3 py-1 rounded-full mb-3 border border-white/20">Out of Stock</span>
+            <button 
+              onClick={async (e) => {
+                e.stopPropagation();
+                if (!isAuthenticated) return toast.info("Please login to get alerts");
+                try {
+                  await fetch(`/api/user/products/${product.id}/notify`, {
+                    method: "POST",
+                    headers: { Authorization: `Bearer ${token}` }
+                  });
+                  toast.success("We'll notify you when it's back!", { icon: "🔔" });
+                } catch (err) {
+                  toast.error("Failed to set alert");
+                }
+              }}
+              className="bg-primary text-white text-xs font-bold py-2 px-4 rounded-xl shadow-lg shadow-primary/20 hover:scale-105 active:scale-95 transition-all"
+            >
+              Notify Me
+            </button>
           </div>
         )}
       </div>

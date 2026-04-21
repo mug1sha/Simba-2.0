@@ -32,9 +32,43 @@ class User(Base):
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
     phone = Column(String, nullable=True)
+    is_verified = Column(Boolean, default=False)
+    verification_token = Column(String, nullable=True)
+    reset_password_token = Column(String, nullable=True)
+    reset_password_expires = Column(String, nullable=True)
 
     favorites = relationship("Favorite", back_populates="user")
     orders = relationship("Order", back_populates="user")
+    addresses = relationship("Address", back_populates="user")
+    payment_methods = relationship("PaymentMethod", back_populates="user")
+
+class Address(Base):
+    __tablename__ = "addresses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    label = Column(String)  # Home, Work, etc.
+    full_name = Column(String)
+    phone = Column(String)
+    street = Column(String)
+    apartment = Column(String, nullable=True)
+    city = Column(String)
+    district = Column(String)
+    is_default = Column(Boolean, default=False)
+
+    user = relationship("User", back_populates="addresses")
+
+class PaymentMethod(Base):
+    __tablename__ = "payment_methods"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    provider = Column(String)  # Visa, MasterCard, MTN, Airtel
+    last_four = Column(String)
+    expiry_date = Column(String)
+    is_default = Column(Boolean, default=False)
+
+    user = relationship("User", back_populates="payment_methods")
 
 class Favorite(Base):
     __tablename__ = "favorites"
@@ -42,8 +76,11 @@ class Favorite(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     product_id = Column(Integer, ForeignKey("products.id"))
+    original_price = Column(Float)
+    created_at = Column(String)
 
     user = relationship("User", back_populates="favorites")
+    product = relationship("Product")
 
 class Order(Base):
     __tablename__ = "orders"
@@ -52,6 +89,50 @@ class Order(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     total = Column(Float)
     items = Column(String) # Storing items as a serialized JSON string or similar
+    status = Column(String, default="Pending")
+    tracking_number = Column(String, nullable=True)
+    address_id = Column(Integer, ForeignKey("addresses.id"), nullable=True)
+    payment_method_id = Column(Integer, ForeignKey("payment_methods.id"), nullable=True)
     created_at = Column(String)
+    updated_at = Column(String, nullable=True)
 
     user = relationship("User", back_populates="orders")
+    address = relationship("Address")
+    payment_method = relationship("PaymentMethod")
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    type = Column(String) # Order, Promo, Restock
+    title = Column(String)
+    message = Column(String)
+    is_read = Column(Boolean, default=False)
+    link = Column(String, nullable=True)
+    created_at = Column(String)
+
+    user = relationship("User")
+
+class RestockSubscription(Base):
+    __tablename__ = "restock_subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    product_id = Column(Integer, ForeignKey("products.id"))
+    created_at = Column(String)
+
+    user = relationship("User")
+    product = relationship("Product")
+
+class SupportTicket(Base):
+    __tablename__ = "support_tickets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    subject = Column(String)
+    message = Column(String)
+    status = Column(String, default="Open")
+    created_at = Column(String)
+
+    user = relationship("User")

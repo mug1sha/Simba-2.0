@@ -5,8 +5,10 @@ import CategorySection from "@/components/CategorySection";
 import DealsSection from "@/components/DealsSection";
 import TrustSection from "@/components/TrustSection";
 import ProductsGrid from "@/components/ProductsGrid";
+import RecommendationsSection from "@/components/RecommendationsSection";
 import CartDrawer from "@/components/CartDrawer";
 import FooterSection from "@/components/FooterSection";
+import ChatWidget from "@/components/ChatWidget";
 
 const Index = () => {
   const [searchQuery, setSearchQuery] = useState("");
@@ -20,8 +22,10 @@ const Index = () => {
       <DealsSection />
       <TrustSection />
       <ProductsGrid searchQuery={searchQuery} selectedCategory={selectedCategory} />
+      <RecommendationsSection />
       <FooterSection />
       <CartDrawer />
+      <ChatWidget />
     </div>
   );
 };

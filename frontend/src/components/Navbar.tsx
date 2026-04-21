@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Search, ShoppingCart, Menu, X, MapPin, ChevronDown, User as UserIcon } from "lucide-react";
+import { Search, ShoppingCart, Menu, X, MapPin, ChevronDown, User as UserIcon, Bell, Info, Package, Sparkles, ShoppingBag, LogOut } from "lucide-react";
 import { useCart } from "@/contexts/CartContext";
 import { useLanguage, type Language } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -13,6 +13,8 @@ import { AuthDialog } from "@/components/AuthDialog";
 import { useQuery } from "@tanstack/react-query";
 import { fetchProducts, formatPrice } from "@/lib/products";
 import { motion, AnimatePresence } from "framer-motion";
+import { ProfileDialog } from "@/components/ProfileDialog";
+import NotificationCenter from "./NotificationCenter";
 
 interface NavbarProps {
   searchQuery: string;
@@ -28,9 +30,10 @@ const languages: { code: Language; label: string; flag: string }[] = [
 const Navbar = ({ searchQuery, onSearchChange }: NavbarProps) => {
   const { totalItems, totalPrice, setIsCartOpen } = useCart();
   const { language, setLanguage, t } = useLanguage();
-  const { isAuthenticated, user, logout } = useAuth();
+  const { isAuthenticated, user, logout, token } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
 
   const { data: searchResults = [] } = useQuery({
@@ -39,52 +42,44 @@ const Navbar = ({ searchQuery, onSearchChange }: NavbarProps) => {
     enabled: searchQuery.length >= 2,
   });
 
+  const { data: priceDrops = [] } = useQuery({
+    queryKey: ["price-drops"],
+    queryFn: async () => {
+      if (!isAuthenticated || !token) return [];
+      const res = await fetch("/api/user/favorites/price-drops", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      return res.json();
+    },
+    enabled: isAuthenticated && !!token
+  });
+
   const previewResults = searchResults.slice(0, 6);
-
-  const handleSearchKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      const element = document.getElementById("products");
-      if (element) {
-        element.scrollIntoView({ behavior: "smooth" });
-        setIsSearchFocused(false);
-      }
-    }
-  };
-
   const currentLang = languages.find((l) => l.code === language) || languages[0];
 
   return (
-    <header className="sticky top-0 z-50 bg-card/95 backdrop-blur-lg border-b border-border/50 shadow-sm">
-      {/* Top bar */}
-      <div className="bg-foreground text-primary-foreground">
-        <div className="container mx-auto px-4 py-1.5 flex items-center justify-between text-xs">
-          <div className="flex items-center gap-4">
-            <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> Kigali, Rwanda</span>
+    <header className="sticky top-0 z-50 bg-[#08081a]/95 backdrop-blur-3xl border-b border-white/10 shadow-2xl">
+      {/* Top Header/Utility Bar */}
+      <div className="bg-white/[0.02] border-b border-white/5 py-2">
+        <div className="container mx-auto px-4 flex items-center justify-between text-[10px] font-bold text-gray-500 uppercase tracking-widest">
+          <div className="flex items-center gap-6">
+            <span className="flex items-center gap-1.5"><MapPin className="w-3 h-3 text-primary" /> Kigali, Rwanda</span>
+            <span className="hidden md:inline font-medium">Free Delivery over RWF 50,000</span>
           </div>
-          <div className="flex items-center gap-4">
-            {isAuthenticated ? (
-              <span className="cursor-pointer font-medium hover:text-primary transition-all duration-200" onClick={logout}>Logout ({user?.email})</span>
-            ) : (
-              <div className="flex gap-5">
-                <span className="cursor-pointer text-muted-foreground font-medium hover:text-primary hover:-translate-y-0.5 transform transition-all duration-200" onClick={() => setIsAuthOpen(true)}>Login</span>
-                <span className="cursor-pointer text-muted-foreground font-medium hover:text-primary hover:-translate-y-0.5 transform transition-all duration-200" onClick={() => setIsAuthOpen(true)}>Sign Up</span>
-              </div>
-            )}
+          <div className="flex items-center gap-6">
+            <NotificationCenter token={token} />
+            
             <DropdownMenu>
-              <DropdownMenuTrigger className="flex items-center gap-1 hover:opacity-80 transition-opacity outline-none">
+              <DropdownMenuTrigger className="flex items-center gap-2 hover:text-white transition-colors outline-none">
                 <span>{currentLang.flag}</span>
-                <span className="font-medium">{currentLang.code}</span>
-                <ChevronDown className="w-3 h-3 opacity-60" />
+                <span>{currentLang.code}</span>
+                <ChevronDown className="w-3 h-3" />
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="bg-card border-border">
+              <DropdownMenuContent align="end" className="bg-[#08081a] border-white/10 min-w-[120px]">
                 {languages.map((lang) => (
-                  <DropdownMenuItem
-                    key={lang.code}
-                    onClick={() => setLanguage(lang.code)}
-                    className="flex items-center gap-2 cursor-pointer"
-                  >
+                  <DropdownMenuItem key={lang.code} onClick={() => setLanguage(lang.code)} className="flex items-center gap-2 cursor-pointer focus:bg-white/5">
                     <span>{lang.flag}</span>
-                    <span>{lang.label}</span>
+                    <span className="text-xs">{lang.label}</span>
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
@@ -93,23 +88,23 @@ const Navbar = ({ searchQuery, onSearchChange }: NavbarProps) => {
         </div>
       </div>
 
-      {/* Main nav */}
-      <div className="container mx-auto px-4 py-3">
-        <div className="flex items-center gap-4">
-          {/* Logo */}
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
-              <span className="text-primary-foreground font-heading font-bold text-lg">S</span>
+      {/* Main Navigation */}
+      <div className="container mx-auto px-4 py-4">
+        <div className="flex items-center gap-8">
+          {/* Brand Logo */}
+          <div className="flex items-center gap-3 shrink-0 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+            <div className="w-11 h-11 bg-primary rounded-[1rem] flex items-center justify-center shadow-lg shadow-primary/20">
+              <span className="text-white font-black text-xl italic">S</span>
             </div>
             <div className="hidden sm:block">
-              <h1 className="font-heading font-bold text-lg leading-tight text-foreground">Simba</h1>
-              <p className="text-[10px] text-muted-foreground leading-none">Supermarket</p>
+              <h1 className="font-black text-xl leading-none text-white tracking-tighter">SIMBA</h1>
+              <p className="text-[10px] text-primary font-black uppercase tracking-[0.3em] leading-none mt-1">Market</p>
             </div>
           </div>
 
-          {/* Search */}
-          <div className="flex-1 max-w-xl relative">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground z-10" />
+          {/* Intelligent Search Bar */}
+          <div className="flex-1 max-w-2xl relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 z-10" />
             <input
               type="text"
               placeholder={t("nav.search_placeholder")}
@@ -117,64 +112,35 @@ const Navbar = ({ searchQuery, onSearchChange }: NavbarProps) => {
               onChange={(e) => onSearchChange(e.target.value)}
               onFocus={() => setIsSearchFocused(true)}
               onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
-              onKeyDown={handleSearchKeyDown}
-              className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-muted/60 border border-border/50 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/50 transition-all shadow-inner"
+              className="w-full pl-11 pr-11 py-3.5 rounded-2xl bg-white/[0.03] border border-white/10 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary/40 focus:bg-white/[0.05] transition-all shadow-2xl"
             />
             {searchQuery && (
-              <button
-                onClick={() => onSearchChange("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground transition-colors"
-              >
+              <button onClick={() => onSearchChange("")} className="absolute right-4 top-1/2 -translate-y-1/2 p-1 text-gray-500 hover:text-white transition-colors">
                 <X className="w-4 h-4" />
               </button>
             )}
 
-            {/* Search Dropdown */}
             <AnimatePresence>
               {isSearchFocused && searchQuery.length >= 2 && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 5, scale: 0.98 }}
-                  transition={{ type: "spring", stiffness: 400, damping: 30 }}
-                  className="absolute top-full left-0 right-0 mt-2 bg-card/90 backdrop-blur-xl border border-border/50 rounded-2xl shadow-2xl overflow-hidden z-[60]"
-                >
-                  <div className="p-2 space-y-1">
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }} className="absolute top-full left-0 right-0 mt-3 bg-[#08081a]/95 backdrop-blur-2xl border border-white/10 rounded-3xl shadow-2xl overflow-hidden z-[60]">
+                  <div className="p-3 space-y-1">
                     {previewResults.length > 0 ? (
                       <>
-                        <div className="px-3 py-1.5 text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
-                          Quick Results
-                        </div>
+                        <div className="px-4 py-2 text-[10px] font-black text-gray-600 uppercase tracking-widest border-b border-white/5 mb-2">QUICK MATCHES</div>
                         {previewResults.map((product) => (
-                          <div
-                            key={product.id}
-                            className="flex items-center gap-3 p-2 rounded-xl hover:bg-primary/5 cursor-pointer transition-colors group"
-                            onClick={() => {
-                              // Potentially navigate or open product details
-                              onSearchChange(product.name);
-                              document.getElementById("products")?.scrollIntoView({ behavior: "smooth" });
-                            }}
-                          >
-                            <div className="w-10 h-10 rounded-lg overflow-hidden bg-muted flex-shrink-0">
+                          <div key={product.id} className="flex items-center gap-4 p-3 rounded-2xl hover:bg-white/5 cursor-pointer transition-all group" onClick={() => { onSearchChange(product.name); document.getElementById("products")?.scrollIntoView({ behavior: "smooth" }); }}>
+                            <div className="w-12 h-12 rounded-xl overflow-hidden bg-white/5 flex-shrink-0 border border-white/10">
                               <img src={product.image} alt={product.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
                             </div>
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-foreground truncate">{product.name}</p>
-                              <p className="text-xs text-primary font-bold">{formatPrice(product.price)}</p>
+                              <p className="text-sm font-bold text-white truncate">{product.name}</p>
+                              <p className="text-xs text-primary font-black">{formatPrice(product.price)}</p>
                             </div>
                           </div>
                         ))}
-                        <button
-                          onClick={() => document.getElementById("products")?.scrollIntoView({ behavior: "smooth" })}
-                          className="w-full mt-2 py-2.5 text-xs font-bold text-primary hover:bg-primary/5 transition-colors border-t border-border/30 rounded-b-xl"
-                        >
-                          View All Results
-                        </button>
                       </>
                     ) : (
-                      <div className="py-8 text-center">
-                        <p className="text-sm text-muted-foreground">No products found for "{searchQuery}"</p>
-                      </div>
+                      <div className="py-12 text-center text-gray-500 text-xs font-bold uppercase tracking-widest">No products found</div>
                     )}
                   </div>
                 </motion.div>
@@ -182,32 +148,71 @@ const Navbar = ({ searchQuery, onSearchChange }: NavbarProps) => {
             </AnimatePresence>
           </div>
 
-          {/* Cart */}
-          <button
-            onClick={() => setIsCartOpen(true)}
-            className="relative flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2.5 rounded-xl font-medium text-sm hover:opacity-90 transition-opacity"
-          >
-            <ShoppingCart className="w-5 h-5" />
-            <span className="hidden md:inline">
-              RWF {totalPrice.toLocaleString()}
-            </span>
-            {totalItems > 0 && (
-              <span className="absolute -top-2 -right-2 bg-foreground text-background text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold animate-count-up">
-                {totalItems}
-              </span>
+          {/* User & Actions */}
+          <div className="flex items-center gap-4">
+            {isAuthenticated ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger className="flex items-center gap-3 hover:bg-white/5 px-4 py-2.5 rounded-2xl transition-all outline-none border border-white/5 hover:border-white/10 relative">
+                  <div className="w-8 h-8 bg-primary/20 rounded-xl flex items-center justify-center border border-primary/30 relative">
+                    <UserIcon className="w-4 h-4 text-primary" />
+                    {priceDrops.length > 0 && <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-[#08081a] animate-pulse" />}
+                  </div>
+                  <div className="flex flex-col items-start pr-2">
+                    <span className="text-xs font-bold text-white max-w-[80px] truncate">{user?.first_name || "User"}</span>
+                    <span className="text-[9px] text-gray-500 uppercase tracking-tighter">Premium</span>
+                  </div>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="bg-[#08081a] border-white/10 w-64 p-2 mt-2 rounded-[1.5rem] shadow-2xl">
+                  {priceDrops.length > 0 && (
+                    <div className="m-1 p-3 bg-primary/10 rounded-xl border border-primary/20 mb-2">
+                      <p className="text-[10px] font-black text-primary uppercase tracking-tighter flex items-center gap-2">
+                        <Sparkles className="w-3 h-3" /> {priceDrops.length} Price drops in Wishlist!
+                      </p>
+                    </div>
+                  )}
+                  <DropdownMenuItem onClick={() => setIsProfileOpen(true)} className="flex items-center gap-3 p-3 rounded-xl focus:bg-white/5 cursor-pointer">
+                    <UserIcon className="w-4 h-4 text-gray-500" />
+                    <span className="text-xs font-bold text-white">Manage Account</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setIsProfileOpen(true)} className="flex items-center gap-3 p-3 rounded-xl focus:bg-white/5 cursor-pointer">
+                    <ShoppingBag className="w-4 h-4 text-gray-500" />
+                    <span className="text-xs font-bold text-white">Track Orders</span>
+                  </DropdownMenuItem>
+                  <div className="h-px bg-white/5 my-2 mx-2" />
+                  <DropdownMenuItem onClick={logout} className="flex items-center gap-3 p-3 rounded-xl focus:bg-red-500/10 text-red-500 cursor-pointer">
+                    <LogOut className="w-4 h-4" />
+                    <span className="text-xs font-bold">Sign Out</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <button 
+                onClick={() => setIsAuthOpen(true)}
+                className="px-6 py-2.5 bg-white/[0.03] border border-white/10 rounded-2xl text-xs font-bold text-white hover:bg-white/[0.06] transition-all"
+              >
+                Sign In
+              </button>
             )}
-          </button>
 
-          {/* Mobile menu */}
-          <button
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-2 text-foreground"
-          >
-            {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
+            {/* Cart Trigger */}
+            <button
+              onClick={() => setIsCartOpen(true)}
+              className="relative flex items-center gap-3 bg-primary text-white px-6 py-3 rounded-2xl font-black text-xs hover:scale-[1.03] active:scale-[0.97] transition-all shadow-xl shadow-primary/20 border border-primary/30"
+            >
+              <ShoppingCart className="w-4 h-4" />
+              <span className="hidden lg:inline">RWF {totalPrice.toLocaleString()}</span>
+              {totalItems > 0 && (
+                <span className="absolute -top-2 -right-2 bg-white text-primary text-[10px] font-black w-5 h-5 rounded-lg flex items-center justify-center shadow-2xl transform rotate-12">
+                  {totalItems}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
       </div>
+
       <AuthDialog isOpen={isAuthOpen} onClose={() => setIsAuthOpen(false)} />
+      <ProfileDialog isOpen={isProfileOpen} onClose={() => setIsProfileOpen(false)} />
     </header>
   );
 };
