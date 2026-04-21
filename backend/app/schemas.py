@@ -32,10 +32,15 @@ class StoreData(BaseModel):
 class UserCreate(BaseModel):
     email: str
     password: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    phone: Optional[str] = None
 
 class User(BaseModel):
     id: int
     email: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
 
     class Config:
         from_attributes = True

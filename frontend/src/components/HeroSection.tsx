@@ -1,12 +1,14 @@
 import { ArrowRight, Truck, Shield, Clock } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { FallingProductsBackground } from "./FallingProductsBackground";
 
 const HeroSection = () => {
   const { t } = useLanguage();
 
   return (
     <section className="relative overflow-hidden bg-gradient-to-br from-primary/5 via-background to-brand-warm">
-      <div className="container mx-auto px-4 section-padding">
+      <FallingProductsBackground />
+      <div className="relative z-10 container mx-auto px-4 section-padding">
         <div className="grid lg:grid-cols-2 gap-12 items-center">
           <div className="space-y-6">
             <div className="inline-flex items-center gap-2 bg-primary/10 text-primary px-4 py-1.5 rounded-full text-sm font-medium">

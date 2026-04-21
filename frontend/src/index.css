@@ -104,4 +104,15 @@
   .glass-card {
     @apply bg-card/80 backdrop-blur-xl border border-border/50 rounded-2xl;
   }
+  @keyframes fall-down {
+    0% {
+      transform: translateY(-20vh) rotate(0deg);
+    }
+    100% {
+      transform: translateY(120vh) rotate(360deg);
+    }
+  }
+  .animate-fall-down {
+    animation: fall-down linear infinite;
+  }
 }

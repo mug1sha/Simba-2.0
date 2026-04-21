@@ -29,6 +29,9 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String)
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
 
     favorites = relationship("Favorite", back_populates="user")
     orders = relationship("Order", back_populates="user")

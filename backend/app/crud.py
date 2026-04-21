@@ -11,7 +11,9 @@ def get_products(db: Session, category: str = None, search: str = None, skip: in
     if category:
         query = query.filter(models.Product.category == category)
     if search:
-        query = query.filter(models.Product.name.contains(search))
+        search_words = search.split()
+        for word in search_words:
+            query = query.filter(models.Product.name.ilike(f"%{word}%"))
     return query.offset(skip).limit(limit).all()
 
 def get_categories(db: Session):
@@ -26,7 +28,13 @@ def get_user_by_email(db: Session, email: str):
 
 def create_user(db: Session, user: schemas.UserCreate):
     hashed_password = get_password_hash(user.password)
-    db_user = models.User(email=user.email, hashed_password=hashed_password)
+    db_user = models.User(
+        email=user.email,
+        hashed_password=hashed_password,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        phone=user.phone,
+    )
     db.add(db_user)
     db.commit()
     db.refresh(db_user)

@@ -34,8 +34,8 @@ const ProductsGrid = ({ searchQuery, selectedCategory }: ProductsGridProps) => {
       <div className="container mx-auto px-4">
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h2 className="font-heading text-3xl md:text-4xl font-bold text-foreground">
-              {selectedCategory || "All Products"}
+            <h2 className="font-heading text-3xl md:text-4xl font-bold text-foreground capitalize">
+              {searchQuery ? `Results for "${searchQuery}"` : (selectedCategory || "All Products")}
             </h2>
             <p className="text-muted-foreground mt-1">
               {products.length} product{products.length !== 1 ? "s" : ""} found
