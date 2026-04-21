@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Search, ShoppingCart, Menu, X, MapPin, Globe, ChevronDown } from "lucide-react";
+import { Search, ShoppingCart, Menu, X, MapPin, ChevronDown, User as UserIcon } from "lucide-react";
 import { useCart } from "@/contexts/CartContext";
 import { useLanguage, type Language } from "@/contexts/LanguageContext";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,6 +24,7 @@ const languages: { code: Language; label: string; flag: string }[] = [
 const Navbar = ({ searchQuery, onSearchChange }: NavbarProps) => {
   const { totalItems, totalPrice, setIsCartOpen } = useCart();
   const { language, setLanguage, t } = useLanguage();
+  const { isAuthenticated, user, logout } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const currentLang = languages.find((l) => l.code === language) || languages[0];
@@ -34,9 +36,16 @@ const Navbar = ({ searchQuery, onSearchChange }: NavbarProps) => {
         <div className="container mx-auto px-4 py-1.5 flex items-center justify-between text-xs">
           <div className="flex items-center gap-4">
             <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> Kigali, Rwanda</span>
-            <span className="hidden sm:inline">{t("nav.free_delivery")}</span>
           </div>
           <div className="flex items-center gap-4">
+            {isAuthenticated ? (
+              <span className="cursor-pointer" onClick={logout}>Logout ({user?.email})</span>
+            ) : (
+              <div className="flex gap-2">
+                <span>Login</span>
+                <span>Sign Up</span>
+              </div>
+            )}
             <DropdownMenu>
               <DropdownMenuTrigger className="flex items-center gap-1 hover:opacity-80 transition-opacity outline-none">
                 <span>{currentLang.flag}</span>
@@ -56,7 +65,6 @@ const Navbar = ({ searchQuery, onSearchChange }: NavbarProps) => {
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
-            <span>{t("nav.momo_accepted")}</span>
           </div>
         </div>
       </div>
@@ -112,17 +120,6 @@ const Navbar = ({ searchQuery, onSearchChange }: NavbarProps) => {
           </button>
         </div>
       </div>
-
-      {/* Mobile menu dropdown */}
-      {mobileMenuOpen && (
-        <div className="md:hidden border-t border-border bg-card px-4 py-3 animate-slide-in">
-          <nav className="flex flex-col gap-2 text-sm">
-            <a href="#categories" className="py-2 text-foreground hover:text-primary transition-colors">{t("nav.categories")}</a>
-            <a href="#deals" className="py-2 text-foreground hover:text-primary transition-colors">{t("nav.deals")}</a>
-            <a href="#products" className="py-2 text-foreground hover:text-primary transition-colors">{t("nav.all_products")}</a>
-          </nav>
-        </div>
-      )}
     </header>
   );
 };

@@ -1,5 +1,7 @@
+from datetime import datetime
 from sqlalchemy.orm import Session
 from . import models, schemas
+from .auth import get_password_hash
 
 def get_store_info(db: Session):
     return db.query(models.StoreInfo).first()
@@ -18,3 +20,34 @@ def get_categories(db: Session):
 
 def get_product(db: Session, product_id: int):
     return db.query(models.Product).filter(models.Product.id == product_id).first()
+
+def get_user_by_email(db: Session, email: str):
+    return db.query(models.User).filter(models.User.email == email).first()
+
+def create_user(db: Session, user: schemas.UserCreate):
+    hashed_password = get_password_hash(user.password)
+    db_user = models.User(email=user.email, hashed_password=hashed_password)
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+def get_favorites(db: Session, user_id: int):
+    return db.query(models.Favorite).filter(models.Favorite.user_id == user_id).all()
+
+def add_favorite(db: Session, user_id: int, product_id: int):
+    db_favorite = models.Favorite(user_id=user_id, product_id=product_id)
+    db.add(db_favorite)
+    db.commit()
+    db.refresh(db_favorite)
+    return db_favorite
+
+def get_orders(db: Session, user_id: int):
+    return db.query(models.Order).filter(models.Order.user_id == user_id).all()
+
+def create_order(db: Session, user_id: int, total: float, items: str):
+    db_order = models.Order(user_id=user_id, total=total, items=items, created_at=str(datetime.utcnow()))
+    db.add(db_order)
+    db.commit()
+    db.refresh(db_order)
+    return db_order

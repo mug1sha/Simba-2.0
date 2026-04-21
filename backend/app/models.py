@@ -1,4 +1,5 @@
-from sqlalchemy import Boolean, Column, Float, Integer, String
+from sqlalchemy import Boolean, Column, Float, Integer, String, ForeignKey
+from sqlalchemy.orm import relationship
 from .database import Base
 
 class StoreInfo(Base):
@@ -21,3 +22,33 @@ class Product(Base):
     inStock = Column(Boolean, default=True)
     image = Column(String)
     unit = Column(String)
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True)
+    hashed_password = Column(String)
+
+    favorites = relationship("Favorite", back_populates="user")
+    orders = relationship("Order", back_populates="user")
+
+class Favorite(Base):
+    __tablename__ = "favorites"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    product_id = Column(Integer, ForeignKey("products.id"))
+
+    user = relationship("User", back_populates="favorites")
+
+class Order(Base):
+    __tablename__ = "orders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    total = Column(Float)
+    items = Column(String) # Storing items as a serialized JSON string or similar
+    created_at = Column(String)
+
+    user = relationship("User", back_populates="orders")
