@@ -43,13 +43,10 @@ class User(BaseModel):
     last_name: Optional[str] = None
     phone: Optional[str] = None
     is_verified: bool = False
-    addresses: List[Address] = []
-    payment_methods: List[PaymentMethod] = []
-    favorites: List[Favorite] = []
-    orders: List[Order] = []
-
-    class Config:
-        from_attributes = True
+    addresses: List["Address"] = []
+    payment_methods: List["PaymentMethod"] = []
+    favorites: List["Favorite"] = []
+    orders: List["Order"] = []
 
     class Config:
         from_attributes = True
@@ -92,9 +89,6 @@ class PaymentMethodCreate(PaymentMethodBase):
 class PaymentMethod(PaymentMethodBase):
     id: int
     user_id: int
-
-    class Config:
-        from_attributes = True
 
     class Config:
         from_attributes = True
