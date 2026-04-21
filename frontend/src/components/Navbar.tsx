@@ -39,11 +39,11 @@ const Navbar = ({ searchQuery, onSearchChange }: NavbarProps) => {
           </div>
           <div className="flex items-center gap-4">
             {isAuthenticated ? (
-              <span className="cursor-pointer" onClick={logout}>Logout ({user?.email})</span>
+              <span className="cursor-pointer hover:underline" onClick={logout}>Logout ({user?.email})</span>
             ) : (
-              <div className="flex gap-2">
-                <span>Login</span>
-                <span>Sign Up</span>
+              <div className="flex gap-4">
+                <span className="cursor-pointer hover:underline">Login</span>
+                <span className="cursor-pointer hover:underline">Sign Up</span>
               </div>
             )}
             <DropdownMenu>
