@@ -39,12 +39,13 @@ def seed_data():
         # Seed Store Info
         store_data = data['store']
         db_store = models.StoreInfo(
+            id=1, # Fixed ID for store info
             name=store_data['name'],
             tagline=store_data['tagline'],
             location=store_data['location'],
             currency=store_data['currency']
         )
-        db.add(db_store)
+        db.merge(db_store)
 
         # Seed Products
         products_data = data['products']
@@ -59,7 +60,7 @@ def seed_data():
                 image=p['image'],
                 unit=p['unit']
             )
-            db.add(db_product)
+            db.merge(db_product)
 
         db.commit()
         print(f"Successfully seeded {len(products_data)} products.")

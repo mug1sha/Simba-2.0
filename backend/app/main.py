@@ -11,6 +11,10 @@ models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Simba Backend API")
 
+@app.get("/")
+def read_root():
+    return {"status": "Simba API is Live!"}
+
 @app.on_event("startup")
 def startup_event():
     db = SessionLocal()
@@ -18,8 +22,11 @@ def startup_event():
         # Check if store info exists
         if not db.query(models.StoreInfo).first():
             print("Database empty, starting auto-seed...")
-            from .seed import seed_data
-            seed_data()
+            try:
+                from .seed import seed_data
+                seed_data()
+            except Exception as e:
+                print(f"Startup seeding error (likely another worker is seeding): {e}")
     finally:
         db.close()
 
