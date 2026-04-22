@@ -3,8 +3,10 @@ import { useAuth } from "@/contexts/AuthContext";
 import ProductCard from "./ProductCard";
 import { Sparkles } from "lucide-react";
 import { motion } from "framer-motion";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 const RecommendationsSection = () => {
+  const { t } = useLanguage();
   const { isAuthenticated, token } = useAuth();
   
   const { data: recommendations = [], isLoading } = useQuery({
@@ -29,8 +31,8 @@ const RecommendationsSection = () => {
             <Sparkles className="w-5 h-5 text-primary" />
           </div>
           <div>
-            <h2 className="text-2xl font-bold text-foreground">Recommended for You</h2>
-            <p className="text-sm text-muted-foreground">Based on your interests</p>
+            <h2 className="text-2xl font-bold text-foreground">{t("recommend.title")}</h2>
+            <p className="text-sm text-muted-foreground">{t("recommend.desc")}</p>
           </div>
         </div>
 

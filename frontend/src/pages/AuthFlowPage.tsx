@@ -22,15 +22,38 @@ export const AuthFlowPage = () => {
   const [showPwd, setShowPwd] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
+  const getPwdStrength = (p: string) => {
+    let score = 0;
+    if (p.length >= 8) score++;
+    if (/[A-Z]/.test(p)) score++;
+    if (/[a-z]/.test(p)) score++;
+    if (/\d/.test(p)) score++;
+    if (/[!@#$%^&*(),.?":{}|<>]/.test(p)) score++;
+    return score;
+  };
+  const strengthData = [
+    { label: "Very Weak", color: "bg-red-500" },
+    { label: "Weak", color: "bg-orange-500" },
+    { label: "Medium", color: "bg-yellow-500" },
+    { label: "Strong", color: "bg-green-500" },
+    { label: "Very Strong", color: "bg-blue-500" },
+  ];
+
   useEffect(() => {
     if (isVerify && token) {
       handleVerify();
+    } else if (isVerify && !token) {
+      setStatus("ERROR");
+      setErrorMsg("Missing verification token");
+      setLoading(false);
     }
   }, []);
 
   const handleVerify = async () => {
     try {
-      const res = await fetch(`/api/auth/verify-email?token=${token}`);
+      const res = await fetch(`/api/auth/verify-email?token=${encodeURIComponent(token || "")}`, {
+        method: "POST",
+      });
       if (!res.ok) throw new Error((await res.json()).detail || "Verification failed");
       setStatus("SUCCESS");
     } catch (err: any) {
@@ -43,6 +66,7 @@ export const AuthFlowPage = () => {
 
   const handleReset = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!token) return toast({ title: "Error", description: "Missing reset token", variant: "destructive" });
     if (newPwd !== confirmPwd) return toast({ title: "Error", description: "Passwords do not match", variant: "destructive" });
     setLoading(true);
     try {
@@ -128,13 +152,27 @@ export const AuthFlowPage = () => {
                   </div>
                   
                   <div className="space-y-4">
-                    <div className="relative group">
-                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500 group-focus-within:text-primary transition-colors z-10" />
-                      <input type={showPwd ? "text" : "password"} placeholder="New password" value={newPwd} onChange={(e) => setNewPwd(e.target.value)} required
-                        className="w-full h-14 pl-12 pr-12 bg-white/[0.06] border border-white/10 rounded-2xl text-white focus:outline-none focus:border-primary/60 transition-all" />
-                      <button type="button" onClick={() => setShowPwd(!showPwd)} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
-                        {showPwd ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                      </button>
+                    <div className="space-y-1">
+                      <div className="relative group">
+                        <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500 group-focus-within:text-primary transition-colors z-10" />
+                        <input type={showPwd ? "text" : "password"} placeholder="New password" value={newPwd} onChange={(e) => setNewPwd(e.target.value)} required
+                          className="w-full h-14 pl-12 pr-12 bg-white/[0.06] border border-white/10 rounded-2xl text-white focus:outline-none focus:border-primary/60 transition-all" />
+                        <button type="button" onClick={() => setShowPwd(!showPwd)} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
+                          {showPwd ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                        </button>
+                      </div>
+                      {newPwd && (
+                        <div className="px-1">
+                          <div className="flex gap-1 h-1.5 mt-2">
+                            {[...Array(5)].map((_, i) => (
+                              <div key={i} className={`flex-1 rounded-full transition-all duration-500 ${i < getPwdStrength(newPwd) ? strengthData[getPwdStrength(newPwd) - 1].color : "bg-white/10"}`} />
+                            ))}
+                          </div>
+                          <p className="text-[10px] text-right mt-1.5 font-medium" style={{ color: getPwdStrength(newPwd) > 0 ? "" : "gray" }}>
+                            {getPwdStrength(newPwd) > 0 ? strengthData[getPwdStrength(newPwd) - 1].label : "Security level"}
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     <div className="relative group">

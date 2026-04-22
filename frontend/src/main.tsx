@@ -3,11 +3,14 @@ import App from "./App.tsx";
 import "./index.css";
 import { CartProvider } from "./contexts/CartContext.tsx";
 import { AuthProvider } from "./contexts/AuthContext.tsx";
+import { ThemeProvider } from "next-themes";
 
 createRoot(document.getElementById("root")!).render(
   <AuthProvider>
     <CartProvider>
-      <App />
+      <ThemeProvider attribute="class" defaultTheme="light" enableSystem>
+        <App />
+      </ThemeProvider>
     </CartProvider>
   </AuthProvider>
 );

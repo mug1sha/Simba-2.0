@@ -1,18 +1,23 @@
+import os
 from datetime import datetime, timedelta
-from typing import Optional
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
+from dotenv import load_dotenv
 from . import models, crud
 from .database import get_db
 
-SECRET_KEY = "SUPER_SECRET_KEY_REPLACE_IN_PROD"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+load_dotenv()
 
-from fastapi.security import OAuth2PasswordBearer
+SECRET_KEY = os.getenv("SECRET_KEY", "SUPER_SECRET_KEY_REPLACE_IN_PROD")
+ALGORITHM = os.getenv("ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+APP_ENV = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", "development")).lower()
+
+if APP_ENV in {"production", "prod"} and SECRET_KEY == "SUPER_SECRET_KEY_REPLACE_IN_PROD":
+    raise RuntimeError("SECRET_KEY must be set to a strong unique value in production")
+
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
 
 import bcrypt

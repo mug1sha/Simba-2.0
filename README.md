@@ -63,7 +63,57 @@ cd frontend
 npm install
 npm run dev
 ```
-*The frontend will start at http://localhost:8083 (or available port)*
+*The frontend will start at http://localhost:8080 (or available port)*
+
+---
+
+## Production Checklist
+
+### Backend Environment
+Create `backend/.env` from `backend/.env.example` and set production values:
+
+```bash
+APP_ENV=production
+SECRET_KEY=<strong-random-secret>
+DATABASE_URL=<production-database-url>
+FRONTEND_URL=https://your-frontend-domain.example
+CORS_ORIGINS=https://your-frontend-domain.example
+SMTP_HOST=<smtp-host>
+SMTP_PORT=587
+SMTP_USER=<smtp-user>
+SMTP_PASSWORD=<smtp-password>
+EMAIL_FROM=no-reply@your-domain.example
+```
+
+Email behavior:
+- Development: if SMTP variables are not set, verification and reset messages are written to `backend/dev_mailbox.log`. The API also returns a local `dev_link` so the UI can show an "Open local email link" button.
+- Production: set SMTP variables and verify your sending domain with your email provider. The backend will send verification and reset messages through SMTP and will not expose `dev_link`.
+- Useful free SMTP/API providers: Brevo has a free plan with 300 email sends/day, Resend has a free plan with 3,000 emails/month and 100/day, and SendGrid advertises a free trial with 100 emails/day for 60 days.
+
+Local mailbox endpoint:
+
+```bash
+curl http://127.0.0.1:8000/api/dev/mailbox
+```
+
+That endpoint is disabled when `APP_ENV=production`.
+
+For production serving:
+
+```bash
+cd backend
+gunicorn app.main:app -k uvicorn.workers.UvicornWorker
+```
+
+### Frontend Environment
+Set the API URL before building:
+
+```bash
+cd frontend
+VITE_API_BASE_URL=https://your-backend-domain.example/api npm run build
+```
+
+Deploy `frontend/dist` to your static hosting provider.
 
 ---
 

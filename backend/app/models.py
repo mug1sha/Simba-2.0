@@ -23,6 +23,44 @@ class Product(Base):
     image = Column(String)
     unit = Column(String)
 
+class BranchStock(Base):
+    __tablename__ = "branch_stock"
+
+    id = Column(Integer, primary_key=True, index=True)
+    branch = Column(String, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), index=True)
+    stock_count = Column(Integer, default=0)
+    updated_at = Column(String, nullable=True)
+
+    product = relationship("Product")
+
+class BranchReview(Base):
+    __tablename__ = "branch_reviews"
+
+    id = Column(Integer, primary_key=True, index=True)
+    branch = Column(String, index=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    rating = Column(Integer)
+    comment = Column(String, nullable=True)
+    created_at = Column(String)
+
+    order = relationship("Order")
+    user = relationship("User")
+
+class CustomerFlag(Base):
+    __tablename__ = "customer_flags"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), index=True)
+    branch = Column(String, index=True)
+    reason = Column(String)
+    created_at = Column(String)
+
+    user = relationship("User")
+    order = relationship("Order")
+
 class User(Base):
     __tablename__ = "users"
 
@@ -34,6 +72,7 @@ class User(Base):
     phone = Column(String, nullable=True)
     is_verified = Column(Boolean, default=False)
     verification_token = Column(String, nullable=True)
+    verification_token_expires = Column(String, nullable=True)
     reset_password_token = Column(String, nullable=True)
     reset_password_expires = Column(String, nullable=True)
 
@@ -93,6 +132,12 @@ class Order(Base):
     tracking_number = Column(String, nullable=True)
     address_id = Column(Integer, ForeignKey("addresses.id"), nullable=True)
     payment_method_id = Column(Integer, ForeignKey("payment_methods.id"), nullable=True)
+    fulfillment_type = Column(String, default="pickup")
+    pickup_branch = Column(String, nullable=True)
+    pickup_time = Column(String, nullable=True)
+    deposit_amount = Column(Float, default=0)
+    deposit_method = Column(String, nullable=True)
+    assigned_staff = Column(String, nullable=True)
     created_at = Column(String)
     updated_at = Column(String, nullable=True)
 

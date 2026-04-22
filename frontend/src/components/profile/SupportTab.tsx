@@ -2,15 +2,17 @@ import { motion } from "framer-motion";
 import { ChevronDown } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/components/ui/use-toast";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 const SupportTab = () => {
   const { token } = useAuth();
   const { toast } = useToast();
+  const { t } = useLanguage();
 
   const faqs = [
-    { q: "Where do you deliver?", a: "We deliver all across Kigali, including Kimironko, Nyarutarama, and Kicukiro!" },
-    { q: "What are your delivery hours?", a: "We operate from 8 AM to 8 PM daily. Same-day delivery for orders before 2 PM." },
-    { q: "How can I pay?", a: "We accept MTN MoMo, Airtel Money, and all major Credit/Debit cards." }
+    { q: t("support.faq.delivery_q"), a: t("support.faq.delivery_a") },
+    { q: t("support.faq.hours_q"), a: t("support.faq.hours_a") },
+    { q: t("support.faq.pay_q"), a: t("support.faq.pay_a") }
   ];
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -30,22 +32,22 @@ const SupportTab = () => {
         body: JSON.stringify(ticket)
       });
       if (!res.ok) throw new Error();
-      toast({ title: "Message Sent", description: "We'll get back to you soon!" });
+      toast({ title: t("support.sent"), description: t("support.sent_desc") });
       (e.target as HTMLFormElement).reset();
     } catch (err) {
-      toast({ variant: "destructive", title: "Error", description: "Failed to send message." });
+      toast({ variant: "destructive", title: t("common.error"), description: t("support.failed") });
     }
   };
 
   return (
     <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-8">
       <div>
-        <h2 className="text-2xl font-bold text-white mb-2">Help & Support</h2>
-        <p className="text-gray-500 text-sm">Find answers or get in touch with our team.</p>
+        <h2 className="text-2xl font-bold text-white mb-2">{t("support.title")}</h2>
+        <p className="text-gray-500 text-sm">{t("support.desc")}</p>
       </div>
 
       <div className="space-y-4">
-        <h3 className="text-sm font-bold text-primary uppercase tracking-widest">Frequently Asked Questions</h3>
+        <h3 className="text-sm font-bold text-primary uppercase tracking-widest">{t("support.faq")}</h3>
         <div className="space-y-2">
           {faqs.map((item, i) => (
             <details key={i} className="group bg-white/[0.03] border border-white/5 rounded-2xl overflow-hidden">
@@ -62,12 +64,12 @@ const SupportTab = () => {
       </div>
 
       <div className="space-y-4 pt-6 border-t border-white/5">
-        <h3 className="text-sm font-bold text-primary uppercase tracking-widest">Send us a Message</h3>
+        <h3 className="text-sm font-bold text-primary uppercase tracking-widest">{t("support.send_message")}</h3>
         <form onSubmit={handleSubmit} className="space-y-3">
-          <input name="subject" placeholder="Subject" required className="w-full bg-white/[0.05] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-primary/50" />
-          <textarea name="message" placeholder="How can we help?" rows={4} required className="w-full bg-white/[0.05] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-primary/50 resize-none" />
+          <input name="subject" placeholder={t("support.subject")} required className="w-full bg-white/[0.05] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-primary/50" />
+          <textarea name="message" placeholder={t("support.message_placeholder")} rows={4} required className="w-full bg-white/[0.05] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-primary/50 resize-none" />
           <button type="submit" className="w-full h-12 bg-primary text-white font-bold rounded-xl shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-[0.99] transition-all">
-            Submit Inquiry
+            {t("support.submit")}
           </button>
         </form>
       </div>

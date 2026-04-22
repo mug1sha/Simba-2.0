@@ -49,7 +49,7 @@ const CategorySection = ({ onSelectCategory, selectedCategory }: CategorySection
                 }`}
               >
                 <span className="text-3xl">{getCategoryIcon(cat)}</span>
-                <span className="text-sm font-medium text-center leading-tight">{cat}</span>
+                <span className="text-sm font-medium text-center leading-tight">{t(`cat.${cat}`)}</span>
                 <span className="text-[10px] opacity-70">{count} {t("categories.items")}</span>
               </button>
             );

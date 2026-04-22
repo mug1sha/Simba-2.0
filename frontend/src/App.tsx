@@ -9,6 +9,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import Index from "./pages/Index.tsx";
 import NotFound from "./pages/NotFound.tsx";
 import { AuthFlowPage } from "./pages/AuthFlowPage.tsx";
+import BranchDashboard from "./pages/BranchDashboard.tsx";
 
 const queryClient = new QueryClient();
 
@@ -23,6 +24,7 @@ const App = () => (
             <BrowserRouter>
               <Routes>
                 <Route path="/" element={<Index />} />
+                <Route path="/branch" element={<BranchDashboard />} />
                 <Route path="/verify-email" element={<AuthFlowPage />} />
                 <Route path="/reset-password" element={<AuthFlowPage />} />
                 <Route path="*" element={<NotFound />} />

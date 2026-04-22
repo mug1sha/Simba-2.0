@@ -1,5 +1,6 @@
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, field_validator
+import re
 
 class ProductBase(BaseModel):
     id: int
@@ -15,6 +16,45 @@ class Product(ProductBase):
     class Config:
         from_attributes = True
 
+class BranchStock(BaseModel):
+    id: int
+    branch: str
+    product_id: int
+    stock_count: int
+    updated_at: Optional[str] = None
+    product: Product
+
+    class Config:
+        from_attributes = True
+
+class BranchReviewCreate(BaseModel):
+    rating: int
+    comment: Optional[str] = None
+
+    @field_validator("rating")
+    @classmethod
+    def rating_range(cls, v: int) -> int:
+        if v < 1 or v > 5:
+            raise ValueError("Rating must be between 1 and 5")
+        return v
+
+class BranchReview(BaseModel):
+    id: int
+    branch: str
+    order_id: int
+    user_id: int
+    rating: int
+    comment: Optional[str] = None
+    created_at: str
+
+    class Config:
+        from_attributes = True
+
+class BranchRating(BaseModel):
+    branch: str
+    average_rating: float
+    review_count: int
+
 class StoreInfoBase(BaseModel):
     name: str
     tagline: str
@@ -29,12 +69,28 @@ class StoreData(BaseModel):
     store: StoreInfo
     products: List[Product]
 
+
 class UserCreate(BaseModel):
-    email: str
+    email: EmailStr
     password: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     phone: Optional[str] = None
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters long")
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not re.search(r"[a-z]", v):
+            raise ValueError("Password must contain at least one lowercase letter")
+        if not re.search(r"\d", v):
+            raise ValueError("Password must contain at least one digit")
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
+            raise ValueError("Password must contain at least one special character")
+        return v
 
 class User(BaseModel):
     id: int
@@ -97,6 +153,16 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
+class AuthActionResponse(BaseModel):
+    status: str
+    message: str
+    email: Optional[EmailStr] = None
+    delivery: Optional[str] = None
+    dev_link: Optional[str] = None
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
 class Favorite(BaseModel):
     id: int
     product_id: int
@@ -116,6 +182,12 @@ class Order(BaseModel):
     tracking_number: Optional[str] = None
     address_id: Optional[int] = None
     payment_method_id: Optional[int] = None
+    fulfillment_type: Optional[str] = "pickup"
+    pickup_branch: Optional[str] = None
+    pickup_time: Optional[str] = None
+    deposit_amount: Optional[float] = 0
+    deposit_method: Optional[str] = None
+    assigned_staff: Optional[str] = None
     created_at: str
     updated_at: Optional[str] = None
     
@@ -132,8 +204,16 @@ class OrderUpdate(BaseModel):
 class OrderCreate(BaseModel):
     total: float
     items: str
-    address_id: int
-    payment_method_id: int
+    address_id: Optional[int] = None
+    payment_method_id: Optional[int] = None
+    fulfillment_type: Optional[str] = "pickup"
+    pickup_branch: Optional[str] = None
+    pickup_time: Optional[str] = None
+    deposit_amount: Optional[float] = 0
+    deposit_method: Optional[str] = None
+
+class BranchAssignRequest(BaseModel):
+    staff_member: str
 
 class Notification(BaseModel):
     id: int
@@ -172,3 +252,46 @@ class ForgotPasswordRequest(BaseModel):
 class PasswordResetConfirm(BaseModel):
     token: str
     new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters long")
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not re.search(r"[a-z]", v):
+            raise ValueError("Password must contain at least one lowercase letter")
+        if not re.search(r"\d", v):
+            raise ValueError("Password must contain at least one digit")
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
+            raise ValueError("Password must contain at least one special character")
+        return v
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
+    confirm_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters long")
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not re.search(r"[a-z]", v):
+            raise ValueError("Password must contain at least one lowercase letter")
+        if not re.search(r"\d", v):
+            raise ValueError("Password must contain at least one digit")
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
+            raise ValueError("Password must contain at least one special character")
+        return v
+
+class AIChatRequest(BaseModel):
+    message: str
+    lang: Optional[str] = "EN"
+
+class AIChatResponse(BaseModel):
+    response: str
+    products: List[Product] = []

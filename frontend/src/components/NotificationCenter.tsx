@@ -5,20 +5,28 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 interface NotificationCenterProps {
   token: string | null;
 }
 
 const NotificationCenter = ({ token }: NotificationCenterProps) => {
+  const { t } = useLanguage();
   const { data: notifications = [], refetch } = useQuery({
     queryKey: ["notifications"],
     queryFn: async () => {
       if (!token) return [];
-      const res = await fetch("/api/user/notifications", {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      return res.json();
+      try {
+        const res = await fetch("/api/user/notifications", {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!res.ok) return [];
+        return res.json();
+      } catch (err) {
+        console.error("Error fetching notifications:", err);
+        return [];
+      }
     },
     enabled: !!token,
     refetchInterval: 30000 
@@ -33,7 +41,9 @@ const NotificationCenter = ({ token }: NotificationCenterProps) => {
         headers: { Authorization: `Bearer ${token}` }
       });
       refetch();
-    } catch (err) {}
+    } catch (err) {
+      console.error("Error marking notification as read:", err);
+    }
   };
 
   return (
@@ -48,14 +58,14 @@ const NotificationCenter = ({ token }: NotificationCenterProps) => {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="bg-[#08081a]/95 backdrop-blur-2xl border-white/10 w-80 p-0 overflow-hidden shadow-[0_32px_80px_rgba(0,0,0,0.5)] rounded-2xl mt-2">
         <div className="p-4 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
-          <h4 className="text-sm font-bold text-white uppercase tracking-wider">Notifications</h4>
-          {unreadCount > 0 && <span className="text-[10px] font-bold bg-primary/20 text-primary px-2 py-0.5 rounded-full uppercase">{unreadCount} New</span>}
+          <h4 className="text-sm font-bold text-white uppercase tracking-wider">{t("notifications.title")}</h4>
+          {unreadCount > 0 && <span className="text-[10px] font-bold bg-primary/20 text-primary px-2 py-0.5 rounded-full uppercase">{unreadCount} {t("notifications.new")}</span>}
         </div>
         <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
           {notifications.length === 0 ? (
             <div className="py-12 text-center">
               <Bell className="w-8 h-8 text-white/5 mx-auto mb-2" />
-              <p className="text-xs text-muted-foreground">All caught up!</p>
+              <p className="text-xs text-muted-foreground">{t("notifications.empty")}</p>
             </div>
           ) : (
             notifications.map((notif: any) => {
@@ -89,7 +99,7 @@ const NotificationCenter = ({ token }: NotificationCenterProps) => {
         {notifications.length > 0 && (
           <div className="p-3 bg-white/[0.01] text-center border-t border-white/5">
             <button className="text-[10px] font-bold text-gray-500 hover:text-primary transition-colors uppercase tracking-widest">
-              Clear All Notifications
+              {t("notifications.clear_all")}
             </button>
           </div>
         )}

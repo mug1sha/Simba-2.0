@@ -5,8 +5,10 @@ import { formatPrice, type Product } from "@/lib/products";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 const ProductCard = ({ product }: { product: Product }) => {
+  const { t } = useLanguage();
   const { addItem, items } = useCart();
   const { token, user, isAuthenticated, refreshProfile } = useAuth();
   const queryClient = useQueryClient();
@@ -22,12 +24,12 @@ const ProductCard = ({ product }: { product: Product }) => {
 
   const handleAdd = () => {
     addItem({ ...product });
-    toast.success(`${product.name} added to cart`, { duration: 1500 });
+    toast.success(`${product.name} ${t("products.added_cart")}`, { duration: 1500 });
   };
 
   const toggleFavorite = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!isAuthenticated) return toast.info("Please login to save favorites");
+    if (!isAuthenticated) return toast.info(t("products.login_favorites"));
     
     setIsFavoriting(true);
     try {
@@ -36,18 +38,18 @@ const ProductCard = ({ product }: { product: Product }) => {
           method: "DELETE",
           headers: { Authorization: `Bearer ${token}` }
         });
-        toast.success("Removed from wishlist");
+        toast.success(t("products.removed_wishlist"));
       } else {
         await fetch(`/api/user/favorites?product_id=${product.id}`, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` }
         });
-        toast.success("Added to wishlist");
+        toast.success(t("products.added_wishlist"));
       }
       await refreshProfile();
       queryClient.invalidateQueries({ queryKey: ["user-favorites"] });
     } catch (err) {
-      toast.error("Failed to update wishlist");
+      toast.error(t("products.wishlist_failed"));
     } finally {
       setIsFavoriting(false);
     }
@@ -69,7 +71,7 @@ const ProductCard = ({ product }: { product: Product }) => {
           <div className="w-full h-full flex items-center justify-center text-4xl">📦</div>
         )}
         <span className="absolute top-3 left-3 bg-card/90 backdrop-blur-sm text-[10px] font-medium text-muted-foreground px-2.5 py-1 rounded-full border border-border/50">
-          {product.category}
+          {t(`cat.${product.category}`)}
         </span>
         
         <button
@@ -86,30 +88,30 @@ const ProductCard = ({ product }: { product: Product }) => {
 
         {hasPriceDrop && (
           <div className="absolute bottom-3 left-3 bg-green-500/90 text-white text-[10px] font-bold px-2 py-1 rounded shadow-lg animate-pulse">
-            🔥 PRICE DROP
+            {t("products.price_drop")}
           </div>
         )}
 
         {!product.inStock && (
           <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] flex flex-col items-center justify-center p-4 text-center">
-            <span className="bg-white/10 text-white text-[10px] font-bold px-3 py-1 rounded-full mb-3 border border-white/20">Out of Stock</span>
+            <span className="bg-white/10 text-white text-[10px] font-bold px-3 py-1 rounded-full mb-3 border border-white/20">{t("products.out_of_stock")}</span>
             <button 
               onClick={async (e) => {
                 e.stopPropagation();
-                if (!isAuthenticated) return toast.info("Please login to get alerts");
+                if (!isAuthenticated) return toast.info(t("products.login_alerts"));
                 try {
                   await fetch(`/api/user/products/${product.id}/notify`, {
                     method: "POST",
                     headers: { Authorization: `Bearer ${token}` }
                   });
-                  toast.success("We'll notify you when it's back!", { icon: "🔔" });
+                  toast.success(t("products.alert_success"), { icon: "🔔" });
                 } catch (err) {
-                  toast.error("Failed to set alert");
+                  toast.error(t("products.alert_failed"));
                 }
               }}
               className="bg-primary text-white text-xs font-bold py-2 px-4 rounded-xl shadow-lg shadow-primary/20 hover:scale-105 active:scale-95 transition-all"
             >
-              Notify Me
+              {t("products.notify_me")}
             </button>
           </div>
         )}
@@ -123,7 +125,7 @@ const ProductCard = ({ product }: { product: Product }) => {
         <div className="flex items-end justify-between">
           <div>
             <p className="text-lg font-bold text-primary">{formatPrice(product.price)}</p>
-            <p className="text-[10px] text-muted-foreground">per {product.unit}</p>
+            <p className="text-[10px] text-muted-foreground">{t("unit.per")} {product.unit}</p>
           </div>
           <button
             onClick={handleAdd}

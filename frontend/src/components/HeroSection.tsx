@@ -1,27 +1,38 @@
 import { ArrowRight, Truck, Shield, Clock } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { FallingProductsBackground } from "./FallingProductsBackground";
+import { useAuth } from "@/contexts/AuthContext";
 
 const HeroSection = () => {
   const { t } = useLanguage();
+  const { user, isAuthenticated } = useAuth();
 
   return (
-    <section className="relative overflow-hidden bg-gradient-to-br from-primary/5 via-background to-brand-warm">
+    <section className="relative overflow-hidden bg-gradient-to-br from-primary/5 via-background to-brand-warm dark:from-primary/10 dark:via-background dark:to-brand-dark transition-colors duration-500">
       <FallingProductsBackground />
       <div className="relative z-10 container mx-auto px-4 section-padding">
         <div className="grid lg:grid-cols-2 gap-12 items-center">
           <div className="space-y-6">
-            <div className="inline-flex items-center gap-2 bg-primary/10 text-primary px-4 py-1.5 rounded-full text-sm font-medium">
+            <div className="inline-flex items-center gap-2 bg-primary/10 text-primary px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-widest">
               <span className="w-2 h-2 bg-primary rounded-full animate-pulse" />
-              {t("hero.badge")}
+              {isAuthenticated ? `VIP: ${t("hero.vip_welcome")}, ${user?.first_name}!` : t("hero.badge")}
             </div>
-            <h2 className="font-heading text-4xl md:text-5xl lg:text-6xl font-extrabold text-foreground leading-[1.1] text-balance">
-              {t("hero.title").split(t("hero.delivered"))[0]}
-              <span className="text-primary">{t("hero.delivered")}</span>
-              {t("hero.title").split(t("hero.delivered"))[1]}
+            <h2 className="font-heading text-4xl md:text-5xl lg:text-7xl font-black text-foreground leading-[1] text-balance tracking-tighter">
+              {isAuthenticated ? (
+                <>{t("hero.auth_title_prefix")} <span className="text-primary italic">{t("hero.auth_title_accent")}</span></>
+              ) : (
+                <>
+                  {t("hero.title").split(t("hero.delivered"))[0]}
+                  <span className="text-primary italic">{t("hero.delivered")}</span>
+                  {t("hero.title").split(t("hero.delivered"))[1]}
+                </>
+              )}
             </h2>
-            <p className="text-lg text-muted-foreground max-w-lg leading-relaxed">
-              {t("hero.subtitle")}
+            <p className="text-base md:text-lg text-muted-foreground max-w-lg leading-relaxed font-medium">
+              {isAuthenticated 
+                ? t("hero.auth_subtitle")
+                : t("hero.subtitle")
+              }
             </p>
             <div className="flex flex-wrap gap-3">
               <a
@@ -68,7 +79,7 @@ const HeroSection = () => {
                   <div className="flex items-center justify-between text-white">
                     <div>
                       <p className="text-xs font-medium opacity-80">Simba Supermarket</p>
-                      <p className="text-lg font-bold">Quality & Freshness</p>
+                      <p className="text-lg font-bold">{t("hero.quality_freshness")}</p>
                     </div>
                     <span className="text-3xl">✨</span>
                   </div>

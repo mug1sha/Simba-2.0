@@ -65,7 +65,7 @@ const FooterSection = () => {
         </div>
 
         <div className="border-t border-primary-foreground/10 mt-10 pt-6 text-center text-xs opacity-50">
-          © 2026 {name} {location.includes("Rwanda") ? "Rwanda" : ""}. All rights reserved.
+          © {new Date().getFullYear()} {name} {location.includes("Rwanda") ? "Rwanda" : ""}. All rights reserved.
         </div>
       </div>
     </footer>

@@ -8,6 +8,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/components/ui/use-toast";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 // Tabs
 import OrderHistoryTab from "./profile/OrderHistoryTab";
@@ -24,18 +25,19 @@ interface ProfileDialogProps {
 type ProfileTab = "PERSONAL" | "ADDRESSES" | "PAYMENTS" | "SECURITY" | "WISHLIST" | "ORDERS" | "SUPPORT";
 
 export const ProfileDialog: React.FC<ProfileDialogProps> = ({ isOpen, onClose }) => {
+  const { t } = useLanguage();
   const { user, refreshProfile, logout } = useAuth();
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<ProfileTab>("PERSONAL");
 
   const tabs = [
-    { id: "PERSONAL", label: "Personal Info", icon: User },
-    { id: "ORDERS", label: "My Orders", icon: ShoppingBag },
-    { id: "WISHLIST", label: "Wishlist", icon: Heart },
-    { id: "ADDRESSES", label: "My Addresses", icon: MapPin },
-    { id: "SUPPORT", label: "Help & Support", icon: Headphones },
-    { id: "PAYMENTS", label: "Payments", icon: CreditCard },
-    { id: "SECURITY", label: "Security", icon: Shield },
+    { id: "PERSONAL", label: t("profile.personal_info"), icon: User },
+    { id: "ORDERS", label: t("profile.my_orders"), icon: ShoppingBag },
+    { id: "WISHLIST", label: t("profile.wishlist"), icon: Heart },
+    { id: "ADDRESSES", label: t("profile.my_addresses"), icon: MapPin },
+    { id: "SUPPORT", label: t("profile.help_support"), icon: Headphones },
+    { id: "PAYMENTS", label: t("profile.payments"), icon: CreditCard },
+    { id: "SECURITY", label: t("profile.security"), icon: Shield },
   ];
 
   return (
@@ -50,7 +52,7 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({ isOpen, onClose })
               </div>
               <div>
                 <h3 className="text-sm font-bold text-white truncate">{user?.first_name} {user?.last_name}</h3>
-                <p className="text-[10px] text-gray-500 uppercase tracking-tighter">Premium Member</p>
+                <p className="text-[10px] text-gray-500 uppercase tracking-tighter">{t("profile.premium_member")}</p>
               </div>
             </div>
             <div className="space-y-1 text-left">
@@ -70,7 +72,7 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({ isOpen, onClose })
           </div>
           <div className="mt-auto p-8 border-t border-white/5">
             <button onClick={() => { logout(); onClose(); }} className="w-full flex items-center gap-3 px-4 py-3 text-xs font-bold text-red-500 hover:bg-red-500/5 rounded-xl transition-all">
-              <LogOut className="w-4 h-4" /> Sign Out
+              <LogOut className="w-4 h-4" /> {t("profile.sign_out")}
             </button>
           </div>
         </div>
@@ -81,15 +83,15 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({ isOpen, onClose })
             {activeTab === "PERSONAL" && (
               <motion.div key="personal" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-10">
                 <div>
-                  <h2 className="text-3xl font-black text-white mb-2 tracking-tighter uppercase text-left">PERSONAL INFO</h2>
-                  <p className="text-gray-500 text-sm text-left">Update your identity and contact details.</p>
+                  <h2 className="text-3xl font-black text-white mb-2 tracking-tighter uppercase text-left">{t("profile.personal_title")}</h2>
+                  <p className="text-gray-500 text-sm text-left">{t("profile.personal_desc")}</p>
                 </div>
                 <div className="grid grid-cols-2 gap-6">
                   {[
-                    { label: "First Name", value: user?.first_name },
-                    { label: "Last Name", value: user?.last_name },
-                    { label: "Email Address", value: user?.email },
-                    { label: "Phone Number", value: user?.phone || "Not set" },
+                    { label: t("profile.first_name"), value: user?.first_name },
+                    { label: t("profile.last_name"), value: user?.last_name },
+                    { label: t("profile.email"), value: user?.email },
+                    { label: t("profile.phone"), value: user?.phone || t("common.not_set") },
                   ].map((field) => (
                     <div key={field.label} className="space-y-2 p-5 bg-white/[0.03] border border-white/5 rounded-3xl group hover:border-white/10 transition-all text-left">
                       <p className="text-[10px] uppercase font-bold text-primary tracking-widest">{field.label}</p>
@@ -99,7 +101,7 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({ isOpen, onClose })
                 </div>
                 <div className="text-left">
                   <button className="px-8 py-3 bg-white/5 text-white text-xs font-bold rounded-xl border border-white/10 hover:bg-white/10 transition-all">
-                    Edit Profile Details
+                    {t("profile.edit_details")}
                   </button>
                 </div>
               </motion.div>

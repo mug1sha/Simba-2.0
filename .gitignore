@@ -5,11 +5,18 @@ __pycache__/
 *$py.class
 .env
 simba.db
+backend/.env
+backend/dev_mailbox.log
+backend/simba.db
+backend/*.db
+backend/app/__pycache__/
+backend/**/__pycache__/
 
 # Node
 node_modules/
-frontend/node_modules/
+frontend/.env
 frontend/dist/
+frontend/node_modules/
 .eslintcache
 
 # OS
@@ -20,3 +27,6 @@ Thumbs.db
 .gemini/
 plans/
 render-deploy.md
+
+.codex
+.codex/
