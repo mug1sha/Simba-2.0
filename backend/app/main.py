@@ -341,6 +341,7 @@ def ai_chat(
 ):
     # Optional auth for personalization
     # We try to get the user if a token is present, but don't fail if not
+    user = None
     user_id = None
     if authorization and authorization.lower().startswith("bearer "):
         try:
@@ -350,9 +351,18 @@ def ai_chat(
             user = crud.get_user_by_email(db, email=email) if email else None
             user_id = user.id if user else None
         except Exception:
+            user = None
             user_id = None
-        
-    return crud.get_ai_support_response(db, message=req.message, user_id=user_id, lang=req.lang)
+
+    browser_location = req.user_context.location.model_dump() if req.user_context and req.user_context.location else None
+    return crud.get_ai_support_response(
+        db,
+        message=req.message,
+        user_id=user_id,
+        user=user,
+        lang=req.lang,
+        browser_location=browser_location,
+    )
 
 # --- ADDRESS & PAYMENT ---
 @app.post("/api/user/addresses", response_model=schemas.Address, tags=["Profile"])

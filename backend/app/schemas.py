@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from typing import List, Optional
 from pydantic import BaseModel, EmailStr, field_validator
 import re
@@ -212,6 +213,30 @@ class OrderCreate(BaseModel):
     deposit_amount: Optional[float] = 0
     deposit_method: Optional[str] = None
 
+    @field_validator("pickup_time")
+    @classmethod
+    def pickup_time_format(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", v):
+            raise ValueError("Pickup time must use format YYYY-MM-DD HH:MM")
+
+        try:
+            pickup_dt = datetime.strptime(v, "%Y-%m-%d %H:%M")
+        except ValueError as exc:
+            raise ValueError("Pickup time must be a valid date and time") from exc
+
+        now = datetime.now().replace(second=0, microsecond=0)
+        tomorrow_end = (now + timedelta(days=1)).replace(hour=23, minute=59)
+
+        if pickup_dt < now:
+            raise ValueError("Pickup time cannot be in the past")
+        if pickup_dt > tomorrow_end:
+            raise ValueError("Pickup time cannot be later than tomorrow")
+
+        return v
+
 class BranchAssignRequest(BaseModel):
     staff_member: str
 
@@ -291,7 +316,15 @@ class PasswordChangeRequest(BaseModel):
 class AIChatRequest(BaseModel):
     message: str
     lang: Optional[str] = "EN"
+    user_context: Optional["AIChatUserContext"] = None
 
 class AIChatResponse(BaseModel):
     response: str
     products: List[Product] = []
+
+class AIChatLocation(BaseModel):
+    latitude: float
+    longitude: float
+
+class AIChatUserContext(BaseModel):
+    location: Optional[AIChatLocation] = None

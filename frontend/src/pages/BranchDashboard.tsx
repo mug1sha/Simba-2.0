@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Clock, MapPin, PackageCheck, Play, Search, UserRound, Users } from "lucide-react";
 import { formatPrice } from "@/lib/products";
+import { BRANCH_NAMES } from "@/lib/branches";
 
 type BranchRole = "manager" | "staff";
 
@@ -34,18 +35,6 @@ type BranchStock = {
   };
 };
 
-const branches = [
-  "Simba Supermarket Remera",
-  "Simba Supermarket Kimironko",
-  "Simba Supermarket Kacyiru",
-  "Simba Supermarket Nyamirambo",
-  "Simba Supermarket Gikondo",
-  "Simba Supermarket Kanombe",
-  "Simba Supermarket Kinyinya",
-  "Simba Supermarket Kibagabaga",
-  "Simba Supermarket Nyanza",
-];
-
 const statusClass: Record<string, string> = {
   Pending: "bg-yellow-500/15 text-yellow-300 border-yellow-500/20",
   Assigned: "bg-blue-500/15 text-blue-300 border-blue-500/20",
@@ -66,7 +55,7 @@ const parseItems = (items: string) => {
 const BranchDashboard = () => {
   const queryClient = useQueryClient();
   const [role, setRole] = useState<BranchRole>("manager");
-  const [branch, setBranch] = useState(branches[0]);
+  const [branch, setBranch] = useState(BRANCH_NAMES[0]);
   const [staffMember, setStaffMember] = useState("Aline");
   const [stockSearch, setStockSearch] = useState("");
 
@@ -156,7 +145,7 @@ const BranchDashboard = () => {
               ))}
             </div>
             <select value={branch} onChange={(e) => setBranch(e.target.value)} className="rounded-2xl border border-white/10 bg-[#101024] px-4 py-3 text-xs font-bold outline-none">
-              {branches.map((item) => <option key={item}>{item}</option>)}
+              {BRANCH_NAMES.map((item) => <option key={item}>{item}</option>)}
             </select>
             {role === "staff" && (
               <select value={staffMember} onChange={(e) => setStaffMember(e.target.value)} className="rounded-2xl border border-white/10 bg-[#101024] px-4 py-3 text-xs font-bold outline-none">

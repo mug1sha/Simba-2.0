@@ -8,7 +8,7 @@ import { ThemeProvider } from "next-themes";
 createRoot(document.getElementById("root")!).render(
   <AuthProvider>
     <CartProvider>
-      <ThemeProvider attribute="class" defaultTheme="light" enableSystem>
+      <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
         <App />
       </ThemeProvider>
     </CartProvider>

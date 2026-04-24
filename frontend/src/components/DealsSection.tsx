@@ -21,40 +21,39 @@ const DealsSection = () => {
   const dealProducts = products.filter((p) => p.inStock).slice(0, 15);
 
   return (
-    <section id="deals" className="section-padding bg-gradient-to-b from-primary/5 to-background overflow-hidden">
+    <section id="deals" className="section-padding overflow-hidden">
       <div className="container mx-auto px-4">
-        <div className="flex items-center justify-between mb-8">
+        <div className="mb-8 flex items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-xl">🔥</span>
-              <span className="bg-destructive/10 text-destructive text-xs font-semibold px-2.5 py-1 rounded-full uppercase tracking-wider">
+            <div className="mb-3 flex items-center gap-2">
+              <span className="rounded-full border border-border bg-card px-3 py-1 text-[10px] font-black uppercase tracking-[0.24em] text-primary">
                 {t("deals.hot")}
               </span>
             </div>
-            <h2 className="font-heading text-3xl md:text-4xl font-bold text-foreground">{t("deals.title")}</h2>
+            <h2 className="font-heading text-3xl font-bold text-foreground md:text-4xl">{t("deals.title")}</h2>
           </div>
-          <a href="#products" className="text-sm font-medium text-primary hover:underline flex items-center gap-1">
-            {t("deals.view_all")} →
+          <a href="#products" className="text-sm font-bold text-primary transition-opacity hover:opacity-80">
+            {t("deals.view_all")}
           </a>
         </div>
 
-        <div className="relative px-12">
+        <div className="relative rounded-[2rem] border border-border bg-card px-12 py-6">
           <Carousel
             opts={{
               align: "start",
               loop: true,
             }}
             className="w-full"
-          >
-            <CarouselContent className="-ml-4">
+            >
+              <CarouselContent className="-ml-4">
               {dealProducts.map((p) => (
                 <CarouselItem key={p.id} className="pl-4 basis-full sm:basis-1/2 md:basis-1/3 lg:basis-1/4 xl:basis-1/5">
                   <ProductCard product={p} />
                 </CarouselItem>
               ))}
             </CarouselContent>
-            <CarouselPrevious className="-left-12 h-10 w-10 border-border/50 bg-card text-foreground hover:bg-primary hover:text-primary-foreground" />
-            <CarouselNext className="-right-12 h-10 w-10 border-border/50 bg-card text-foreground hover:bg-primary hover:text-primary-foreground" />
+            <CarouselPrevious className="-left-5 h-10 w-10 border-border bg-background text-foreground hover:bg-accent hover:text-foreground" />
+            <CarouselNext className="-right-5 h-10 w-10 border-border bg-background text-foreground hover:bg-accent hover:text-foreground" />
           </Carousel>
         </div>
       </div>

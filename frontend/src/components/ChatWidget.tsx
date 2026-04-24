@@ -15,6 +15,29 @@ type ChatMessage = {
 };
 
 type CartAddMode = "first" | "all" | null;
+type StoredLocation = {
+  latitude: number;
+  longitude: number;
+};
+
+const USER_LOCATION_STORAGE_KEY = "simba-user-location";
+
+const readStoredLocation = (): StoredLocation | null => {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.localStorage.getItem(USER_LOCATION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.latitude === "number" && typeof parsed?.longitude === "number") {
+      return { latitude: parsed.latitude, longitude: parsed.longitude };
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+};
 
 const getCartAddMode = (text: string): CartAddMode => {
   const msg = text.toLowerCase();
@@ -85,6 +108,7 @@ const ChatWidget = () => {
     const currentMsg = message;
     const addMode = getCartAddMode(currentMsg);
     const fallbackProducts = getLastSuggestedProducts();
+    const storedLocation = readStoredLocation();
     setMessage("");
     
     setIsTyping(true);
@@ -95,7 +119,11 @@ const ChatWidget = () => {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ message: currentMsg, lang: language })
+        body: JSON.stringify({
+          message: currentMsg,
+          lang: language,
+          user_context: storedLocation ? { location: storedLocation } : undefined,
+        })
       });
       const data = await res.json();
       const responseProducts = Array.isArray(data.products) ? data.products : [];
@@ -128,23 +156,23 @@ const ChatWidget = () => {
             initial={{ opacity: 0, scale: 0.8, y: 20, transformOrigin: "bottom right" }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.8, y: 20 }}
-            className="mb-4 w-[380px] h-[520px] bg-[#08081a]/95 backdrop-blur-2xl border border-white/10 rounded-[2rem] shadow-[0_32px_80px_rgba(0,0,0,0.4)] flex flex-col overflow-hidden"
+            className="mb-4 flex h-[520px] w-[380px] flex-col overflow-hidden rounded-[2rem] border border-border bg-card/95 shadow-[0_32px_80px_rgba(0,0,0,0.28)] backdrop-blur-2xl"
           >
             {/* Header */}
-            <div className="p-5 border-b border-white/5 bg-white/[0.02] flex items-center justify-between">
+            <div className="flex items-center justify-between border-b border-border/70 bg-[linear-gradient(135deg,hsl(var(--card)),hsl(var(--secondary)/0.88))] p-5">
               <div className="flex items-center gap-3">
                 <div className="relative">
-                  <div className="w-10 h-10 bg-primary/20 rounded-xl flex items-center justify-center border border-primary/30">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-primary/30 bg-primary/18">
                     <Bot className="w-5 h-5 text-primary" />
                   </div>
-                  <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-[#08081a]" />
+                  <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card bg-[hsl(var(--brand-support))]" />
                 </div>
                 <div>
-                  <h4 className="text-sm font-bold text-white">{t("support.chat_title")}</h4>
-                  <p className="text-[10px] text-green-500 font-bold uppercase tracking-widest">{t("support.active_now")}</p>
+                  <h4 className="text-sm font-bold text-foreground">{t("support.chat_title")}</h4>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[hsl(var(--brand-support))]">{t("support.active_now")}</p>
                 </div>
               </div>
-              <button onClick={() => setIsOpen(false)} className="p-2 text-gray-500 hover:text-white transition-colors">
+              <button onClick={() => setIsOpen(false)} className="p-2 text-muted-foreground transition-colors hover:text-foreground">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -153,19 +181,19 @@ const ChatWidget = () => {
             <div ref={scrollRef} className="flex-1 overflow-y-auto p-5 space-y-4 custom-scrollbar">
               {messages.map((msg, idx) => (
                 <div key={idx} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                  <div className={`max-w-[86%] p-3 rounded-2xl text-xs leading-relaxed ${
+                  <div className={`max-w-[86%] rounded-2xl p-3 text-xs leading-relaxed ${
                     msg.role === "user" 
                       ? "bg-primary text-white rounded-tr-none" 
-                      : "bg-white/[0.05] text-gray-300 border border-white/5 rounded-tl-none"
+                      : "rounded-tl-none border border-border bg-accent/70 text-foreground"
                   }`}>
                     {msg.text}
                     {msg.products && msg.products.length > 0 && (
                       <div className="mt-3 space-y-2">
                         {msg.products.map((product) => (
-                          <div key={product.id} className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/15 p-2">
-                            <img src={product.image} alt={product.name} className="h-10 w-10 rounded-lg object-cover bg-white/5" />
+                          <div key={product.id} className="flex items-center gap-2 rounded-xl border border-border/80 bg-card/85 p-2">
+                            <img src={product.image} alt={product.name} className="h-10 w-10 rounded-lg bg-muted object-cover" />
                             <div className="min-w-0 flex-1">
-                              <p className="truncate text-[11px] font-bold text-white">{product.name}</p>
+                              <p className="truncate text-[11px] font-bold text-foreground">{product.name}</p>
                               <p className="text-[10px] font-black text-primary">{formatPrice(product.price)}</p>
                             </div>
                             <button
@@ -183,7 +211,7 @@ const ChatWidget = () => {
                         ))}
                       </div>
                     )}
-                    <p className={`text-[8px] mt-1 opacity-50 ${msg.role === "user" ? "text-right" : "text-left"}`}>
+                    <p className={`mt-1 text-[8px] opacity-50 ${msg.role === "user" ? "text-right text-white/80" : "text-left text-muted-foreground"}`}>
                       {msg.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </p>
                   </div>
@@ -191,23 +219,23 @@ const ChatWidget = () => {
               ))}
               {isTyping && (
                 <div className="flex justify-start">
-                  <div className="bg-white/[0.05] p-3 rounded-2xl rounded-tl-none border border-white/5 flex gap-1">
-                    <div className="w-1.5 h-1.5 bg-gray-600 rounded-full animate-bounce" />
-                    <div className="w-1.5 h-1.5 bg-gray-600 rounded-full animate-bounce [animation-delay:0.2s]" />
-                    <div className="w-1.5 h-1.5 bg-gray-600 rounded-full animate-bounce [animation-delay:0.4s]" />
+                  <div className="flex gap-1 rounded-2xl rounded-tl-none border border-border bg-accent/70 p-3">
+                    <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/70" />
+                    <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:0.2s]" />
+                    <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:0.4s]" />
                   </div>
                 </div>
               )}
             </div>
 
             {/* Input */}
-            <form onSubmit={handleSend} className="p-4 border-t border-white/5 bg-white/[0.01]">
+            <form onSubmit={handleSend} className="border-t border-border/70 bg-[linear-gradient(180deg,hsl(var(--card)),hsl(var(--secondary)/0.72))] p-4">
               <div className="relative">
                 <input
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                   placeholder={t("support.ask_placeholder")}
-                  className="w-full bg-white/[0.05] border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-primary/50 transition-all pr-12"
+                  className="w-full rounded-xl border border-border bg-background/90 px-4 py-3 pr-12 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary/50 focus:outline-none transition-all"
                 />
                 <button 
                   type="submit"
@@ -234,12 +262,12 @@ const ChatWidget = () => {
             </motion.div>
           ) : (
             <motion.div key="chat" initial={{ rotate: 90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: -90, opacity: 0 }}>
-              <div className="absolute -top-12 right-0 bg-white text-[#08081a] px-3 py-1 rounded-full text-[10px] font-black whitespace-nowrap opacity-0 group-hover:opacity-100 transition-all translate-y-2 group-hover:translate-y-0 shadow-xl border border-white/20">
+              <div className="absolute -top-12 right-0 whitespace-nowrap rounded-full border border-border bg-card px-3 py-1 text-[10px] font-black text-foreground opacity-0 shadow-xl transition-all translate-y-2 group-hover:translate-y-0 group-hover:opacity-100">
                 {t("support.need_help")}
-                <div className="absolute bottom-[-4px] right-5 w-2 h-2 bg-white rotate-45" />
+                <div className="absolute bottom-[-4px] right-5 h-2 w-2 rotate-45 border-b border-r border-border bg-card" />
               </div>
               <MessageCircle className="w-6 h-6" />
-              <div className="absolute top-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-primary animate-pulse" />
+              <div className="absolute right-0 top-0 h-3 w-3 animate-pulse rounded-full border-2 border-primary bg-[hsl(var(--brand-support))]" />
             </motion.div>
           )}
         </AnimatePresence>

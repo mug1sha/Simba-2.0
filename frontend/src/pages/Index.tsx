@@ -44,20 +44,20 @@ const Index = () => {
         <TrustSection />
 
         {isAuthenticated && (
-          <div className="container mx-auto px-4 my-16">
+          <div className="container mx-auto my-14 px-4">
             <RecommendationsSection />
           </div>
         )}
 
-        <section id="products" className="container mx-auto px-4 py-20 scroll-mt-24">
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-10">
+        <section id="products" className="container mx-auto scroll-mt-24 px-4 py-16">
+          <div className="mb-10 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
-              <h2 className="text-3xl md:text-4xl font-black text-foreground tracking-tight uppercase">
+              <h2 className="text-3xl font-black tracking-tight text-foreground md:text-4xl">
                 {selectedCategory ? t(`cat.${selectedCategory}`) : t("catalog.collection")}
               </h2>
-              <div className="h-1.5 w-20 bg-primary mt-2 rounded-full" />
+              <div className="mt-3 h-px w-16 bg-border" />
             </div>
-            <p className="text-muted-foreground font-bold text-sm uppercase tracking-widest">
+            <p className="text-sm font-black uppercase tracking-[0.24em] text-muted-foreground">
               {filteredProducts.length} {t("catalog.results")}
             </p>
           </div>
@@ -89,20 +89,20 @@ const Index = () => {
       <CartDrawer />
       <ChatWidget />
       
-      <footer className="bg-muted/30 dark:bg-[#08081a] border-t border-border/50 dark:border-white/5 py-20">
+      <footer className="border-t border-border bg-[linear-gradient(180deg,hsl(var(--card)/0.6),hsl(var(--secondary)/0.72),hsl(var(--card)/0.86))] py-16">
         <div className="container mx-auto px-4">
           <div className="flex flex-col items-center text-center">
-            <div className="flex items-center justify-center gap-3 mb-8">
-              <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center shadow-xl shadow-primary/20 transform -rotate-6">
+            <div className="mb-6 flex items-center justify-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary">
                 <span className="text-white font-black text-xl italic">S</span>
               </div>
               <h2 className="font-black text-2xl tracking-tighter text-foreground">SIMBA</h2>
             </div>
-            <p className="text-muted-foreground text-sm font-medium max-w-sm mb-12 leading-relaxed">
+            <p className="mb-10 max-w-sm text-sm leading-relaxed text-muted-foreground">
               {t("footer.description")}
             </p>
-            <div className="h-px w-full max-w-lg bg-gradient-to-r from-transparent via-border to-transparent mb-12" />
-            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.3em]">
+            <div className="mb-10 h-px w-full max-w-lg bg-border/70" />
+            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-muted-foreground">
               © {new Date().getFullYear()} Simba Supermarket. {t("footer.rights")}
             </p>
           </div>

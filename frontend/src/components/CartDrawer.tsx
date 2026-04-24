@@ -1,39 +1,195 @@
-import { X, Minus, Plus, ShoppingBag, Trash2, MapPin, Smartphone, ChevronRight, CheckCircle2, Shield, Clock, Store } from "lucide-react";
+import { X, Minus, Plus, ShoppingBag, Trash2, MapPin, Smartphone, ChevronRight, CheckCircle2, Shield, Clock, Store, Calendar as CalendarIcon } from "lucide-react";
 import { useCart } from "@/contexts/CartContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatPrice } from "@/lib/products";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { BRANCH_NAMES } from "@/lib/branches";
+import { motion, AnimatePresence } from "framer-motion";
 
 type CheckoutStep = "CART" | "BRANCH" | "DEPOSIT" | "SUCCESS";
+type PersistedCheckoutStep = Exclude<CheckoutStep, "SUCCESS">;
+type PickupDraft = {
+  step: PersistedCheckoutStep;
+  selectedBranch: string;
+  pickupDate: string;
+  pickupHour: string;
+  momoPhone: string;
+};
 
-const PICKUP_BRANCHES = [
-  "Simba Supermarket Remera",
-  "Simba Supermarket Kimironko",
-  "Simba Supermarket Kacyiru",
-  "Simba Supermarket Nyamirambo",
-  "Simba Supermarket Gikondo",
-  "Simba Supermarket Kanombe",
-  "Simba Supermarket Kinyinya",
-  "Simba Supermarket Kibagabaga",
-  "Simba Supermarket Nyanza",
-];
+type CreatedOrder = {
+  id: number;
+  pickup_branch?: string;
+};
 
-const pickupTimes = ["Today 10:00", "Today 12:00", "Today 14:00", "Today 16:00", "Today 18:00", "Tomorrow 10:00", "Tomorrow 14:00", "Tomorrow 18:00"];
 const PICKUP_DEPOSIT_AMOUNT = 500;
+const PICKUP_DRAFT_STORAGE_KEY = "simba-pickup-draft";
+
+const pad2 = (value: number) => String(value).padStart(2, "0");
+
+const formatPickupDateTime = (value: Date) => {
+  const year = value.getFullYear();
+  const month = pad2(value.getMonth() + 1);
+  const day = pad2(value.getDate());
+  const hours = pad2(value.getHours());
+  const minutes = pad2(value.getMinutes());
+  return `${year}-${month}-${day} ${hours}:${minutes}`;
+};
+
+const formatPickupDate = (value: Date) => {
+  const year = value.getFullYear();
+  const month = pad2(value.getMonth() + 1);
+  const day = pad2(value.getDate());
+  return `${year}-${month}-${day}`;
+};
+
+const formatPickupTime = (value: Date) => `${pad2(value.getHours())}:${pad2(value.getMinutes())}`;
+
+const combinePickupDateTime = (date: Date, time: string) => {
+  const match = time.trim().match(/^(\d{2}):(\d{2})$/);
+  if (!match) return "";
+  const [, hour, minute] = match;
+  return `${formatPickupDate(date)} ${hour}:${minute}`;
+};
+
+const getTodayStart = () => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return today;
+};
+
+const getTomorrowEnd = () => {
+  const tomorrow = getTodayStart();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(23, 59, 0, 0);
+  return tomorrow;
+};
+
+const getDefaultPickupSelection = () => {
+  const nextHour = new Date();
+  nextHour.setSeconds(0, 0);
+  nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
+  return {
+    date: nextHour,
+    time: formatPickupTime(nextHour),
+  };
+};
+
+const getDefaultPickupDraft = (): PickupDraft => {
+  const selection = getDefaultPickupSelection();
+  return {
+    step: "CART",
+    selectedBranch: BRANCH_NAMES[0],
+    pickupDate: formatPickupDate(selection.date),
+    pickupHour: selection.time,
+    momoPhone: "",
+  };
+};
+
+const readPickupDraft = (): PickupDraft => {
+  if (typeof window === "undefined") return getDefaultPickupDraft();
+
+  try {
+    const raw = window.localStorage.getItem(PICKUP_DRAFT_STORAGE_KEY);
+    if (!raw) return getDefaultPickupDraft();
+
+    const parsed = JSON.parse(raw);
+    const fallback = getDefaultPickupDraft();
+    const pickupDate = typeof parsed?.pickupDate === "string" ? parsed.pickupDate : fallback.pickupDate;
+
+    return {
+      step: parsed?.step === "BRANCH" || parsed?.step === "DEPOSIT" ? parsed.step : "CART",
+      selectedBranch:
+        typeof parsed?.selectedBranch === "string" && BRANCH_NAMES.includes(parsed.selectedBranch)
+          ? parsed.selectedBranch
+          : fallback.selectedBranch,
+      pickupDate,
+      pickupHour: typeof parsed?.pickupHour === "string" ? parsed.pickupHour : fallback.pickupHour,
+      momoPhone: typeof parsed?.momoPhone === "string" ? parsed.momoPhone : "",
+    };
+  } catch {
+    return getDefaultPickupDraft();
+  }
+};
+
+const parseStoredPickupDate = (value: string) => {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return undefined;
+
+  const [, year, month, day] = match;
+  const parsed = new Date(Number(year), Number(month) - 1, Number(day), 12, 0, 0, 0);
+  if (Number.isNaN(parsed.getTime()) || formatPickupDate(parsed) !== value) {
+    return undefined;
+  }
+  return parsed;
+};
+
+const validatePickupSelection = (date: Date | undefined, time: string) => {
+  if (!date || !time.trim()) {
+    return "required";
+  }
+
+  const trimmed = time.trim();
+  const match = trimmed.match(/^(\d{2}):(\d{2})$/);
+  if (!match) {
+    return "time_format";
+  }
+
+  const [, hour, minute] = match;
+  const pickupDate = new Date(date);
+  pickupDate.setHours(Number(hour), Number(minute), 0, 0);
+
+  if (Number.isNaN(pickupDate.getTime()) || combinePickupDateTime(date, trimmed) !== formatPickupDateTime(pickupDate)) {
+    return "time_format";
+  }
+
+  const now = new Date();
+  now.setSeconds(0, 0);
+  const tomorrowEnd = getTomorrowEnd();
+
+  if (pickupDate < now) {
+    return "past";
+  }
+  if (pickupDate > tomorrowEnd) {
+    return "late";
+  }
+
+  return null;
+};
+
+const getPickupValidationMessage = (
+  validationResult: string | null,
+  t: (key: string) => string,
+) => {
+  if (validationResult === "time_format") return t("pickup.invalid_time_format");
+  if (validationResult === "past") return t("pickup.invalid_time_past");
+  if (validationResult === "late") return t("pickup.invalid_time_late");
+  return t("pickup.select_branch_time");
+};
 
 const CartDrawer = () => {
   const { t } = useLanguage();
-  const { items, isCartOpen, setIsCartOpen, updateQuantity, removeItem, clearCart, totalPrice, totalItems } = useCart();
+  const { items, selectedBranch: cartBranch, isCartOpen, setIsCartOpen, updateQuantity, removeItem, clearCart, totalPrice, totalItems } = useCart();
   const { token, isAuthenticated, refreshProfile } = useAuth();
-  const [step, setStep] = useState<CheckoutStep>("CART");
-  const [selectedBranch, setSelectedBranch] = useState(PICKUP_BRANCHES[0]);
-  const [pickupTime, setPickupTime] = useState(pickupTimes[2]);
-  const [momoPhone, setMomoPhone] = useState("");
+  const queryClient = useQueryClient();
+  const initialDraft = readPickupDraft();
+  const [step, setStep] = useState<CheckoutStep>(initialDraft.step);
+  const [selectedBranch, setSelectedBranch] = useState(cartBranch ?? initialDraft.selectedBranch);
+  const [pickupDate, setPickupDate] = useState<Date | undefined>(() => {
+    const parsedDate = parseStoredPickupDate(initialDraft.pickupDate);
+    return parsedDate ?? getDefaultPickupSelection().date;
+  });
+  const [pickupHour, setPickupHour] = useState(initialDraft.pickupHour);
+  const [momoPhone, setMomoPhone] = useState(initialDraft.momoPhone);
   const [isProcessing, setIsProcessing] = useState(false);
-  const { data: branchRatings = [] } = useQuery({
+  const [recentOrder, setRecentOrder] = useState<CreatedOrder | null>(null);
+  const [showRatingPrompt, setShowRatingPrompt] = useState(false);
+  const [ratingValue, setRatingValue] = useState(5);
+  const [ratingComment, setRatingComment] = useState("");
+  const [isSubmittingRating, setIsSubmittingRating] = useState(false);
+  const { data: branchRatings = [], refetch: refetchBranchRatings } = useQuery({
     queryKey: ["branch-ratings"],
     queryFn: async () => {
       const res = await fetch("/api/branches/ratings");
@@ -48,10 +204,72 @@ const CartDrawer = () => {
   }, {});
 
   const depositAmount = PICKUP_DEPOSIT_AMOUNT;
+  const pickupTime = pickupDate ? combinePickupDateTime(pickupDate, pickupHour) : "";
+
+  useEffect(() => {
+    if (step === "SUCCESS") {
+      window.localStorage.removeItem(PICKUP_DRAFT_STORAGE_KEY);
+      return;
+    }
+
+    const draft: PickupDraft = {
+      step,
+      selectedBranch,
+      pickupDate: pickupDate ? formatPickupDate(pickupDate) : "",
+      pickupHour,
+      momoPhone,
+    };
+    window.localStorage.setItem(PICKUP_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  }, [momoPhone, pickupDate, pickupHour, selectedBranch, step]);
+
+  const resetPickupDraft = () => {
+    const fallback = getDefaultPickupDraft();
+    setStep("CART");
+    setSelectedBranch(fallback.selectedBranch);
+    setPickupDate(parseStoredPickupDate(fallback.pickupDate));
+    setPickupHour(fallback.pickupHour);
+    setMomoPhone(fallback.momoPhone);
+    setRecentOrder(null);
+    setShowRatingPrompt(false);
+    setRatingValue(5);
+    setRatingComment("");
+    window.localStorage.removeItem(PICKUP_DRAFT_STORAGE_KEY);
+  };
 
   const closeDrawer = () => {
     setIsCartOpen(false);
-    setStep("CART");
+    if (step === "SUCCESS") {
+      resetPickupDraft();
+    }
+  };
+
+  const submitBranchRating = async () => {
+    if (!recentOrder?.id || !token) return;
+
+    setIsSubmittingRating(true);
+    try {
+      const res = await fetch(`/api/user/orders/${recentOrder.id}/branch-review`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          rating: ratingValue,
+          comment: ratingComment.trim() || undefined,
+        }),
+      });
+      if (!res.ok) throw new Error();
+
+      await refetchBranchRatings();
+      queryClient.invalidateQueries({ queryKey: ["branch-ratings"] });
+      toast.success(t("review.thanks"));
+      setShowRatingPrompt(false);
+    } catch {
+      toast.error(t("review.failed"));
+    } finally {
+      setIsSubmittingRating(false);
+    }
   };
 
   const handleCheckout = async () => {
@@ -64,11 +282,19 @@ const CartDrawer = () => {
 
     if (step === "BRANCH") {
       if (!selectedBranch || !pickupTime) return toast.error(t("pickup.select_branch_time"));
+      const pickupTimeError = validatePickupSelection(pickupDate, pickupHour);
+      if (pickupTimeError) return toast.error(getPickupValidationMessage(pickupTimeError, t));
       setStep("DEPOSIT");
       return;
     }
 
     if (step === "DEPOSIT") {
+      const pickupTimeError = validatePickupSelection(pickupDate, pickupHour);
+      if (pickupTimeError) {
+        setStep("BRANCH");
+        return toast.error(getPickupValidationMessage(pickupTimeError, t));
+      }
+
       if (!momoPhone.trim()) return toast.error(t("pickup.enter_momo"));
 
       setIsProcessing(true);
@@ -90,13 +316,30 @@ const CartDrawer = () => {
           }),
         });
 
-        if (!res.ok) throw new Error("Order failed");
+        if (!res.ok) {
+          let message = t("cart.order_failed");
+          try {
+            const data = await res.json();
+            if (typeof data?.detail === "string") {
+              message = data.detail;
+            }
+          } catch {
+            // Fall back to the generic message when the response is not JSON.
+          }
+          throw new Error(message);
+        }
+
+        const createdOrder = await res.json();
 
         setStep("SUCCESS");
+        setRecentOrder(createdOrder);
+        setShowRatingPrompt(true);
+        setRatingValue(5);
+        setRatingComment("");
         clearCart();
         refreshProfile();
       } catch (err) {
-        toast.error(t("cart.order_failed"));
+        toast.error(err instanceof Error ? err.message : t("cart.order_failed"));
       } finally {
         setIsProcessing(false);
       }
@@ -109,6 +352,15 @@ const CartDrawer = () => {
   };
 
   if (!isCartOpen) return null;
+
+  const pickupDateValue = pickupDate ? formatPickupDate(pickupDate) : "";
+  const todayValue = formatPickupDate(getTodayStart());
+  const tomorrowValue = formatPickupDate(getTomorrowEnd());
+  const now = new Date();
+  now.setSeconds(0, 0);
+  const todayMinTime = formatPickupTime(now);
+  const timeMin = pickupDateValue === todayValue ? todayMinTime : "00:00";
+  const timeMax = pickupDateValue === tomorrowValue ? "23:59" : undefined;
 
   return (
     <>
@@ -185,7 +437,7 @@ const CartDrawer = () => {
               </div>
 
               <div className="grid grid-cols-1 gap-2">
-                {PICKUP_BRANCHES.map((branch) => (
+                {BRANCH_NAMES.map((branch) => (
                   <button
                     key={branch}
                     type="button"
@@ -208,18 +460,34 @@ const CartDrawer = () => {
 
               <div className="space-y-3 pt-2">
                 <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{t("pickup.pickup_time")}</h4>
-                <div className="grid grid-cols-2 gap-2">
-                  {pickupTimes.map((time) => (
-                    <button
-                      key={time}
-                      type="button"
-                      onClick={() => setPickupTime(time)}
-                      className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-3 text-xs font-bold transition-all ${pickupTime === time ? "bg-primary text-white border-primary" : "bg-white/[0.03] border-white/5 text-gray-400 hover:border-white/10"}`}
-                    >
-                      <Clock className="w-3.5 h-3.5" />
-                      {time}
-                    </button>
-                  ))}
+                <div className="rounded-2xl border border-white/5 bg-white/[0.03] p-4">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1.2fr_0.8fr]">
+                    <div className="relative">
+                      <CalendarIcon className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+                      <input
+                        type="date"
+                        value={pickupDateValue}
+                        min={todayValue}
+                        max={tomorrowValue}
+                        onChange={(e) => setPickupDate(parseStoredPickupDate(e.target.value))}
+                        className="w-full rounded-xl border border-white/10 bg-white/[0.05] py-3 pl-11 pr-4 text-sm font-bold text-white focus:outline-none focus:border-primary/50"
+                      />
+                    </div>
+
+                    <div className="relative">
+                      <Clock className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+                      <input
+                        type="time"
+                        value={pickupHour}
+                        onChange={(e) => setPickupHour(e.target.value)}
+                        min={timeMin}
+                        max={timeMax}
+                        step={60}
+                        className="w-full rounded-xl border border-white/10 bg-white/[0.05] py-3 pl-11 pr-4 text-sm font-bold text-white placeholder:text-gray-600 focus:outline-none focus:border-primary/50"
+                      />
+                    </div>
+                  </div>
+                  <p className="mt-3 text-[11px] leading-relaxed text-gray-400">{t("pickup.time_format_hint")}</p>
                 </div>
               </div>
             </div>
@@ -277,6 +545,12 @@ const CartDrawer = () => {
                 <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">{t("pickup.pickup_time")}</p>
                 <p className="text-sm text-white font-bold">{pickupTime}</p>
               </div>
+              <button
+                onClick={() => setShowRatingPrompt(true)}
+                className="mb-4 w-full rounded-2xl border border-primary/30 bg-primary/10 py-4 font-black uppercase tracking-widest text-xs text-primary transition-all hover:bg-primary/20"
+              >
+                {t("review.rate_now")}
+              </button>
               <button onClick={closeDrawer} className="w-full bg-white text-[#08081a] font-black py-4 rounded-2xl hover:bg-gray-200 transition-all uppercase tracking-widest text-xs">
                 {t("cart.back_shopping")}
               </button>
@@ -341,6 +615,81 @@ const CartDrawer = () => {
           </div>
         )}
       </div>
+
+      <AnimatePresence>
+        {showRatingPrompt && recentOrder && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[130] bg-black/70 backdrop-blur-sm"
+              onClick={() => setShowRatingPrompt(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 20 }}
+              className="fixed left-1/2 top-1/2 z-[131] w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-[2rem] border border-white/10 bg-[#0b1020] p-6 shadow-2xl"
+            >
+              <button
+                type="button"
+                onClick={() => setShowRatingPrompt(false)}
+                className="absolute right-4 top-4 rounded-full border border-white/10 p-2 text-gray-400 transition-colors hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+              <p className="text-[10px] font-black uppercase tracking-[0.28em] text-primary">{t("review.branch_rating")}</p>
+              <h3 className="mt-3 text-2xl font-black tracking-tight text-white">{t("review.after_purchase_title")}</h3>
+              <p className="mt-2 text-sm leading-relaxed text-gray-400">{t("review.after_purchase_desc")}</p>
+
+              <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">{t("pickup.branch")}</p>
+                <p className="mt-1 text-sm font-bold text-white">{recentOrder.pickup_branch || selectedBranch}</p>
+              </div>
+
+              <div className="mt-5 flex gap-2">
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <button
+                    key={star}
+                    type="button"
+                    onClick={() => setRatingValue(star)}
+                    className="rounded-2xl border border-white/10 p-2 transition-transform hover:scale-105"
+                  >
+                    <span className={`text-2xl ${star <= ratingValue ? "text-yellow-400" : "text-gray-600"}`}>★</span>
+                  </button>
+                ))}
+              </div>
+
+              <textarea
+                value={ratingComment}
+                onChange={(e) => setRatingComment(e.target.value)}
+                placeholder={t("review.comment")}
+                rows={4}
+                className="mt-5 w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white outline-none placeholder:text-gray-600 focus:border-primary/50"
+              />
+
+              <div className="mt-5 flex gap-3">
+                <button
+                  type="button"
+                  onClick={submitBranchRating}
+                  disabled={isSubmittingRating}
+                  className="flex-1 rounded-2xl bg-primary px-5 py-3 text-xs font-black uppercase tracking-widest text-white transition-all hover:opacity-90 disabled:opacity-60"
+                >
+                  {isSubmittingRating ? t("cart.processing") : t("review.submit")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowRatingPrompt(false)}
+                  className="rounded-2xl border border-white/10 px-5 py-3 text-xs font-black uppercase tracking-widest text-gray-300 transition-all hover:bg-white/[0.05]"
+                >
+                  {t("review.maybe_later")}
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </>
   );
 };

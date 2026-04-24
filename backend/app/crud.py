@@ -14,15 +14,17 @@ from .groq_service import ask_groq
 VERIFICATION_TOKEN_EXPIRE_HOURS = 24
 RESET_TOKEN_EXPIRE_HOURS = 1
 SIMBA_BRANCHES = [
-    "Simba Supermarket Remera",
-    "Simba Supermarket Kimironko",
-    "Simba Supermarket Kacyiru",
-    "Simba Supermarket Nyamirambo",
-    "Simba Supermarket Gikondo",
-    "Simba Supermarket Kanombe",
-    "Simba Supermarket Kinyinya",
-    "Simba Supermarket Kibagabaga",
-    "Simba Supermarket Nyanza",
+    "Simba Kicukiro",
+    "Simba Kigali Heights",
+    "Simba Kimironko",
+    "Simba Gishushu",
+    "Simba Gacuriro",
+    "Simba Kisimenti",
+    "Simba Gikondo",
+    "Simba Sonatube",
+    "Simba UTC",
+    "Simba Rebero",
+    "Simba Centenary",
 ]
 PICKUP_DEPOSIT_AMOUNT = 500
 SEARCH_STOPWORDS = {
@@ -418,6 +420,18 @@ def get_price_drops(db: Session, user_id: int):
             drops.append(fav)
     return drops
 
+def get_wishlist_products(db: Session, user_id: int, limit: int = 12):
+    """Return the user's saved wishlist products, newest first."""
+    favorites = (
+        db.query(models.Favorite)
+        .join(models.Product)
+        .filter(models.Favorite.user_id == user_id)
+        .order_by(models.Favorite.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [fav.product for fav in favorites if fav.product]
+
 def subscribe_restock(db: Session, user_id: int, product_id: int):
     """Register user for an alert when an item becomes available again."""
     existing = db.query(models.RestockSubscription).filter(
@@ -508,7 +522,12 @@ def create_or_update_branch_review(db: Session, user_id: int, order_id: int, rev
         models.Order.id == order_id,
         models.Order.user_id == user_id,
     ).first()
-    if not order or order.status != "Picked Up" or not order.pickup_branch:
+    if (
+        not order
+        or order.fulfillment_type != "pickup"
+        or not order.pickup_branch
+        or order.status in {"Cancelled", "Returned"}
+    ):
         return None
 
     existing = db.query(models.BranchReview).filter(
@@ -727,7 +746,46 @@ def create_support_ticket(db: Session, user_id: int, ticket: schemas.SupportTick
 def get_support_tickets(db: Session, user_id: int):
     return db.query(models.SupportTicket).filter(models.SupportTicket.user_id == user_id).all()
 
-def get_ai_support_response(db: Session, message: str, user_id: int = None, lang: str = "EN"):
+def _format_user_address(address: models.Address) -> str:
+    parts = [address.label, address.street]
+    if address.apartment:
+        parts.append(address.apartment)
+    parts.extend([address.district, address.city])
+    return ", ".join(part for part in parts if part)
+
+def _build_user_profile_context(user: models.User | None, browser_location: dict | None = None) -> dict:
+    full_name = ""
+    if user:
+        full_name = " ".join(part for part in [user.first_name, user.last_name] if part).strip()
+
+    addresses = user.addresses if user else []
+    default_address = next((address for address in addresses if address.is_default), None) or (addresses[0] if addresses else None)
+    address_lines = [_format_user_address(address) for address in addresses]
+    account_phone = user.phone if user and user.phone else None
+    address_phone = default_address.phone if default_address and default_address.phone else None
+    browser_location_text = None
+    if browser_location and isinstance(browser_location.get("latitude"), (int, float)) and isinstance(browser_location.get("longitude"), (int, float)):
+        browser_location_text = f"{browser_location['latitude']:.5f}, {browser_location['longitude']:.5f}"
+
+    return {
+        "full_name": full_name or (default_address.full_name if default_address else None),
+        "phone": account_phone or address_phone,
+        "default_address": _format_user_address(default_address) if default_address else None,
+        "address_lines": address_lines,
+        "browser_location": browser_location_text,
+        "city": default_address.city if default_address else None,
+        "district": default_address.district if default_address else None,
+        "email": user.email if user else None,
+    }
+
+def get_ai_support_response(
+    db: Session,
+    message: str,
+    user_id: int = None,
+    user: models.User | None = None,
+    lang: str = "EN",
+    browser_location: dict | None = None,
+):
     """
     Simba Smart Support Engine.
     Parses user intent and queries live database for localized product, price, and recommendation info.
@@ -758,43 +816,170 @@ def get_ai_support_response(db: Session, message: str, user_id: int = None, lang
             "found": "I found these for you: {list}. Would you like me to add one to your cart? 🛒",
             "not_found": "I couldn't find any products matching '{term}' right now. Is there something else I can look for? 🔍",
             "recs": "Based on your wishlist, I highly recommend: {list}. They are favorites for a reason! ✨",
+            "wishlist": "Your wishlist currently includes: {list}.",
+            "wishlist_empty": "Your wishlist is empty right now. Save a few products and I can use them for better recommendations.",
+            "wishlist_auth": "Log in first and I can read your wishlist to help with recommendations and saved items.",
             "hits": "Some of our current hits include {list}! You can't go wrong with these. 🔥",
             "delivery": "We offer express delivery across Kigali! RWF 2,000 flat rate, or FREE for orders over RWF 50,000. 🚚",
             "pickup": "For demo checkout, Simba uses branch pick-up. Choose a Kigali branch, choose a pick-up time, then confirm with a RWF {deposit:,.0f} MTN MoMo deposit. Your order is sent to branch staff immediately.",
             "branches": "You can pick up from these Simba branches: {list}.",
             "deposit": "Your order requires a RWF {deposit:,.0f} MTN MoMo deposit to confirm. This is a demo payment screen, then you pay the balance when you pick up.",
             "pay": "We accept MTN MoMo, Airtel Money, and all major cards securely at checkout. 📱💳",
-            "help": "I'm here to help! I can check prices, suggest products, or tell you about our delivery options. What's on your mind? 😊"
+            "help": "I'm here to help! I can check prices, suggest products, or tell you about our delivery options. What's on your mind? 😊",
+            "profile_auth": "Log in first and I can read your saved Simba profile details like your name, phone number, and addresses.",
+            "profile_name": "Your saved Simba name is {value}.",
+            "profile_phone": "The phone number on your Simba profile is {value}.",
+            "profile_address": "Your saved Simba address is {value}.",
+            "profile_addresses": "Your saved Simba addresses are: {value}.",
+            "profile_location": "Your current saved location is approximately {coords}.{suffix}",
+            "profile_location_saved": "Your saved delivery area is {value}.",
+            "profile_missing": "I couldn't find a saved {field} on your Simba profile yet.",
         },
         "RW": {
             "cats": "Dufite ibyiciro {n}, birimo: {list} n'ibindi! Ni ikihe wifuza kureba? 🦁",
             "found": "Nabiboneye ibi: {list}. Haba hari icyo nshyira mu giseke cyawe? 🛒",
             "not_found": "Ntabwo nabonye ibicuruzwa bihuye na '{term}' ubu. Hari kindi nagushakira? 🔍",
             "recs": "Bishingiye ku byo ukunda, ndagusaba: {list}. Ni byiza cyane! ✨",
+            "wishlist": "Ku rutonde rw'ibyo ukunda harimo: {list}.",
+            "wishlist_empty": "Urutonde rw'ibyo ukunda rurimo ubusa ubu. Bika ibicuruzwa bike maze mbikoreshe mu kugusabira neza.",
+            "wishlist_auth": "Banza winjire maze nsome urutonde rw'ibyo ukunda kugira ngo ngufashe neza.",
             "hits": "Bimwe mu bikunzwe cyane harimo {list}! Ibi ni byiza rwose. 🔥",
             "delivery": "Tugeza ibintu hose i Kigali vuba! Wishyura 2,000 macye, cyangwa ku buntu iyo uguze ibirengeje 50,000. 🚚",
             "pickup": "Muri demo, Simba ikoresha gufatira ku ishami. Hitamo ishami ryo muri Kigali, hitamo igihe cyo gufata, hanyuma wemeze na avansi ya MTN MoMo ya RWF {deposit:,.0f}. Komande ihita ijya ku bakozi b'ishami.",
             "branches": "Wafatira kuri aya mashami ya Simba: {list}.",
             "deposit": "Komande yawe isaba avansi ya MTN MoMo ya RWF {deposit:,.0f} kugira ngo yemezwe. Ni screen ya demo, hanyuma igisigaye ukishyura uje gufata komande.",
             "pay": "Twemera MTN MoMo, Airtel Money, n'amakarita yose mu kwishyura. 📱💳",
-            "help": "Ndi hano ngo ndagufasha! Nshobora kureba ibiciro, kukubwira ibyo wagura, cyangwa uburyo tubigeza mu rugo. Ni iki ukeneye? 😊"
+            "help": "Ndi hano ngo ndagufasha! Nshobora kureba ibiciro, kukubwira ibyo wagura, cyangwa uburyo tubigeza mu rugo. Ni iki ukeneye? 😊",
+            "profile_auth": "Banza winjire kugira ngo nsome amakuru yawe ya Simba nka amazina, telefone, na aderesi zabitswe.",
+            "profile_name": "Amazina yawe yabitswe kuri Simba ni {value}.",
+            "profile_phone": "Numero ya telefone iri kuri konti yawe ya Simba ni {value}.",
+            "profile_address": "Aderesi yawe yabitswe kuri Simba ni {value}.",
+            "profile_addresses": "Aderesi zawe zabitswe kuri Simba ni: {value}.",
+            "profile_location": "Aho wabitswe ubu hafi ni {coords}.{suffix}",
+            "profile_location_saved": "Aho uherereye wabitseho ni {value}.",
+            "profile_missing": "Ntabwo nabonye {field} yabitswe kuri konti yawe ya Simba.",
         },
         "FR": {
             "cats": "Nous avons {n} catégories, dont : {list} et plus ! Laquelle souhaitez-vous explorer ? 🦁",
             "found": "J'ai trouvé ceux-ci pour vous : {list}. Souhaitez-vous que j'en ajoute un à votre panier ? 🛒",
             "not_found": "Je n'ai trouvé aucun produit correspondant à '{term}' pour le moment. Cherchez-vous autre chose ? 🔍",
             "recs": "D'après votre liste de souhaits, je vous recommande vivement : {list}. Ce sont des favoris pour une raison ! ✨",
+            "wishlist": "Votre liste d'envies contient actuellement : {list}.",
+            "wishlist_empty": "Votre liste d'envies est vide pour le moment. Enregistrez quelques produits et je m'en servirai pour mieux vous recommander.",
+            "wishlist_auth": "Connectez-vous d'abord et je pourrai lire votre liste d'envies pour vous aider.",
             "hits": "Certains de nos succès actuels incluent {list} ! Vous ne pouvez pas vous tromper avec ceux-ci. 🔥",
             "delivery": "Nous offrons une livraison express dans tout Kigali ! Tarif forfaitaire de 2 000 RWF, ou GRATUIT pour les commandes supérieures à 50 000 RWF. 🚚",
             "pickup": "Pour la démo, Simba utilise le retrait en agence. Choisissez une agence à Kigali, une heure de retrait, puis confirmez avec un acompte MTN MoMo de RWF {deposit:,.0f}. La commande est envoyée immédiatement au personnel de l'agence.",
             "branches": "Vous pouvez retirer votre commande dans ces agences Simba : {list}.",
             "deposit": "Votre commande nécessite un acompte MTN MoMo de RWF {deposit:,.0f} pour être confirmée. C'est un écran de paiement simulé pour la démo, puis vous payez le solde au retrait.",
             "pay": "Nous acceptons MTN MoMo, Airtel Money et toutes les cartes majeures en toute sécurité lors du paiement. 📱💳",
-            "help": "Je suis là pour vous aider ! Je peux vérifier les prix, suggérer des produits ou vous parler de nos options de livraison. Que puis-je faire pour vous ? 😊"
+            "help": "Je suis là pour vous aider ! Je peux vérifier les prix, suggérer des produits ou vous parler de nos options de livraison. Que puis-je faire pour vous ? 😊",
+            "profile_auth": "Connectez-vous d'abord et je pourrai lire vos informations Simba enregistrées comme votre nom, votre numéro et vos adresses.",
+            "profile_name": "Le nom enregistré sur votre compte Simba est {value}.",
+            "profile_phone": "Le numéro de téléphone enregistré sur votre compte Simba est {value}.",
+            "profile_address": "Votre adresse Simba enregistrée est {value}.",
+            "profile_addresses": "Vos adresses Simba enregistrées sont : {value}.",
+            "profile_location": "Votre position enregistrée actuelle est approximativement {coords}.{suffix}",
+            "profile_location_saved": "Votre zone de livraison enregistrée est {value}.",
+            "profile_missing": "Je n'ai pas trouvé de {field} enregistré sur votre profil Simba.",
         }
     }
     
     T = templates.get(lang, templates["EN"])
+    profile_fields = {
+        "EN": {
+            "name": "name",
+            "phone": "phone number",
+            "address": "address",
+            "location": "location",
+        },
+        "RW": {
+            "name": "amazina",
+            "phone": "numero ya telefone",
+            "address": "aderesi",
+            "location": "aho uherereye",
+        },
+        "FR": {
+            "name": "nom",
+            "phone": "numéro de téléphone",
+            "address": "adresse",
+            "location": "position",
+        },
+    }
+    P = profile_fields.get(lang, profile_fields["EN"])
+    wishlist_products = get_wishlist_products(db, user_id=user_id, limit=6) if user_id else []
+    profile_context = _build_user_profile_context(user, browser_location) if user else _build_user_profile_context(None, browser_location)
+
+    profile_terms = [
+        "my name", "who am i", "my phone", "my number", "my contact", "my address", "my addresses",
+        "my location", "my profile", "my details",
+        "amazina yanjye", "telefone yanjye", "numero yanjye", "aderesi yanjye", "aho ndi", "umwirondoro wanjye",
+        "mon nom", "mon numéro", "mon telephone", "mon téléphone", "mon adresse", "ma position", "mon profil",
+    ]
+    if any(term in msg for term in profile_terms):
+        location_query = any(term in msg for term in ["location", "aho ndi", "position", "where am i"])
+        if not user_id and location_query and profile_context["browser_location"]:
+            return {
+                "response": T["profile_location"].format(coords=profile_context["browser_location"], suffix=""),
+                "products": [],
+            }
+        if not user_id:
+            return {"response": T["profile_auth"], "products": []}
+
+        if any(term in msg for term in ["name", "who am i", "amazina", "nom"]):
+            if profile_context["full_name"]:
+                return {"response": T["profile_name"].format(value=profile_context["full_name"]), "products": []}
+            return {"response": T["profile_missing"].format(field=P["name"]), "products": []}
+
+        if any(term in msg for term in ["phone", "number", "contact", "telefone", "numero", "numéro"]):
+            if profile_context["phone"]:
+                return {"response": T["profile_phone"].format(value=profile_context["phone"]), "products": []}
+            return {"response": T["profile_missing"].format(field=P["phone"]), "products": []}
+
+        if any(term in msg for term in ["address", "addresses", "aderesi", "adresse"]):
+            if len(profile_context["address_lines"]) > 1:
+                return {"response": T["profile_addresses"].format(value="; ".join(profile_context["address_lines"][:3])), "products": []}
+            if profile_context["default_address"]:
+                return {"response": T["profile_address"].format(value=profile_context["default_address"]), "products": []}
+            return {"response": T["profile_missing"].format(field=P["address"]), "products": []}
+
+        if location_query:
+            if profile_context["browser_location"]:
+                suffix = ""
+                if profile_context["default_address"]:
+                    suffix = f" {T['profile_location_saved'].format(value=profile_context['default_address'])}"
+                return {
+                    "response": T["profile_location"].format(coords=profile_context["browser_location"], suffix=suffix),
+                    "products": [],
+                }
+            if profile_context["default_address"]:
+                return {"response": T["profile_location_saved"].format(value=profile_context["default_address"]), "products": []}
+            return {"response": T["profile_missing"].format(field=P["location"]), "products": []}
+
+        details = []
+        if profile_context["full_name"]:
+            details.append(T["profile_name"].format(value=profile_context["full_name"]))
+        if profile_context["phone"]:
+            details.append(T["profile_phone"].format(value=profile_context["phone"]))
+        if profile_context["default_address"]:
+            details.append(T["profile_address"].format(value=profile_context["default_address"]))
+        if profile_context["browser_location"]:
+            details.append(T["profile_location"].format(coords=profile_context["browser_location"], suffix=""))
+        if details:
+            return {"response": " ".join(details), "products": []}
+        return {"response": T["profile_missing"].format(field=P["address"]), "products": []}
+
+    wishlist_terms = [
+        "wishlist", "wish list", "favorites", "saved", "save for later",
+        "ibyifuzo", "ibyo ukunda", "favoris", "liste d'envies"
+    ]
+    if any(k in msg for k in wishlist_terms):
+        if not user_id:
+            return {"response": T["wishlist_auth"], "products": []}
+        if not wishlist_products:
+            return {"response": T["wishlist_empty"], "products": []}
+        listed = [f"{p.name} (RWF {p.price:,.0f})" for p in wishlist_products[:4]]
+        return {"response": T["wishlist"].format(list="; ".join(listed)), "products": wishlist_products[:4]}
 
     # 1. Category Information
     if any(k in msg for k in ["category", "categories", "ibyiciro", "catégorie"]):
@@ -853,6 +1038,10 @@ def get_ai_support_response(db: Session, message: str, user_id: int = None, lang
         return {"response": T["pay"], "products": []}
 
     relevant_products = get_ai_catalog_products(db, message)
+    if wishlist_products:
+        seen_ids = {product.id for product in relevant_products}
+        relevant_products = wishlist_products + [product for product in relevant_products if product.id not in seen_ids]
+        relevant_products = relevant_products[:160]
 
     product_context = "\n".join(
         [
@@ -869,10 +1058,11 @@ def get_ai_support_response(db: Session, message: str, user_id: int = None, lang
                 "content": (
                     "You are Simba Supermarket's product matching assistant. "
                     "Use the catalog context to match the customer's request to relevant products. "
+                    "If wishlist context is present, use it for personalization and for questions about saved or favorite items. "
                     "Infer common shopping needs: for breakfast, suggest items like milk, bread, cereal, tea, coffee, juice, oats, jam, or honey if present. "
                     "For a direct product question like fresh milk, select matching milk products. "
                     "You also know Simba's pickup operations: demo checkout is pickup-first, customers choose one Kigali branch, choose a pickup time, and confirm with a RWF 500 MTN MoMo deposit. "
-                    "Real pickup branches are Simba Supermarket Remera, Kimironko, Kacyiru, Nyamirambo, Gikondo, Kanombe, Kinyinya, Kibagabaga, and Nyanza. "
+                    f"Real pickup branches are {', '.join(SIMBA_BRANCHES)}. "
                     "Return JSON only with this exact shape: "
                     "{\"response\":\"short natural-language answer\",\"product_ids\":[123,456]}. "
                     "Use only ids from the catalog context. Return at most 6 product_ids. "
@@ -883,6 +1073,43 @@ def get_ai_support_response(db: Session, message: str, user_id: int = None, lang
             {
                 "role": "system",
                 "content": f"Catalog context:\n{product_context}",
+            },
+            {
+                "role": "system",
+                "content": (
+                    "Authenticated customer profile context:\n"
+                    + (
+                        "\n".join(
+                            [
+                                f"- full_name={profile_context['full_name'] or 'unknown'}",
+                                f"- email={profile_context['email'] or 'unknown'}",
+                                f"- phone={profile_context['phone'] or 'unknown'}",
+                                f"- default_address={profile_context['default_address'] or 'unknown'}",
+                                f"- all_addresses={'; '.join(profile_context['address_lines']) if profile_context['address_lines'] else 'none'}",
+                                f"- current_browser_location={profile_context['browser_location'] or 'unknown'}",
+                            ]
+                        )
+                        if user_id
+                        else "- No authenticated profile context available."
+                    )
+                ),
+            },
+            {
+                "role": "system",
+                "content": (
+                    "Wishlist context:\n"
+                    + (
+                        "\n".join(
+                            [
+                                f"- id={p.id}; name={p.name}; price=RWF {p.price:,.0f}; category={p.category}; unit={p.unit}; "
+                                f"{'in stock' if p.inStock else 'out of stock'}"
+                                for p in wishlist_products
+                            ]
+                        )
+                        if wishlist_products
+                        else "- No authenticated wishlist context available."
+                    )
+                ),
             },
             {"role": "user", "content": message},
         ],

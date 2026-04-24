@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ShoppingBag, ChevronRight, CheckCircle2, Globe, MapPin, Star } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -43,6 +43,34 @@ const OrderCard = ({ order, onCancel }: OrderCardProps) => {
   const isCancellable = ["Pending", "Processing"].includes(order.status);
   const isReturnable = order.status === "Delivered";
   const canReviewBranch = order.fulfillment_type === "pickup" && order.status === "Picked Up" && !reviewed;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadExistingReview = async () => {
+      if (!token || order.fulfillment_type !== "pickup") return;
+
+      try {
+        const res = await fetch(`/api/user/orders/${order.id}/branch-review`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && data) {
+          setReviewed(true);
+          if (typeof data.rating === "number") setReviewRating(data.rating);
+          if (typeof data.comment === "string") setReviewComment(data.comment);
+        }
+      } catch {
+        // Ignore read failures and keep the inline form available.
+      }
+    };
+
+    loadExistingReview();
+    return () => {
+      cancelled = true;
+    };
+  }, [order.fulfillment_type, order.id, token]);
 
   const handleCancel = async () => {
     if (!confirm(t("order.confirm_cancel"))) return;

@@ -56,21 +56,20 @@ const ProductCard = ({ product }: { product: Product }) => {
   };
 
   return (
-    <div className="group bg-card rounded-2xl border border-border/50 overflow-hidden hover-lift">
-      {/* Image */}
-      <div className="relative aspect-square bg-muted/30 overflow-hidden">
+    <div className="group overflow-hidden rounded-[1.5rem] border border-border bg-card hover-lift">
+      <div className="relative aspect-square overflow-hidden bg-muted/30">
         {!imgError ? (
           <img
             src={product.image}
             alt={product.name}
             loading="lazy"
             onError={() => setImgError(true)}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-4xl">📦</div>
+          <div className="flex h-full w-full items-center justify-center text-4xl">📦</div>
         )}
-        <span className="absolute top-3 left-3 bg-card/90 backdrop-blur-sm text-[10px] font-medium text-muted-foreground px-2.5 py-1 rounded-full border border-border/50">
+        <span className="absolute left-3 top-3 rounded-full border border-border bg-card/95 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
           {t(`cat.${product.category}`)}
         </span>
         
@@ -79,22 +78,22 @@ const ProductCard = ({ product }: { product: Product }) => {
           disabled={isFavoriting}
           className={`absolute top-3 right-3 p-2 rounded-full backdrop-blur-md border transition-all ${
             isFavorite 
-              ? "bg-red-500/20 border-red-500/30 text-red-500" 
-              : "bg-black/20 border-white/10 text-white hover:bg-black/40"
+              ? "bg-red-500/15 border-red-500/30 text-red-500" 
+              : "bg-card/90 border-border text-foreground hover:bg-card"
           }`}
         >
           <Heart className={`w-4 h-4 ${isFavorite ? "fill-current" : ""}`} />
         </button>
 
         {hasPriceDrop && (
-          <div className="absolute bottom-3 left-3 bg-green-500/90 text-white text-[10px] font-bold px-2 py-1 rounded shadow-lg animate-pulse">
+          <div className="absolute bottom-3 left-3 rounded-full bg-green-600 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-white">
             {t("products.price_drop")}
           </div>
         )}
 
         {!product.inStock && (
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] flex flex-col items-center justify-center p-4 text-center">
-            <span className="bg-white/10 text-white text-[10px] font-bold px-3 py-1 rounded-full mb-3 border border-white/20">{t("products.out_of_stock")}</span>
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/55 p-4 text-center backdrop-blur-[2px]">
+            <span className="mb-3 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-white">{t("products.out_of_stock")}</span>
             <button 
               onClick={async (e) => {
                 e.stopPropagation();
@@ -109,7 +108,7 @@ const ProductCard = ({ product }: { product: Product }) => {
                   toast.error(t("products.alert_failed"));
                 }
               }}
-              className="bg-primary text-white text-xs font-bold py-2 px-4 rounded-xl shadow-lg shadow-primary/20 hover:scale-105 active:scale-95 transition-all"
+              className="rounded-xl bg-primary px-4 py-2 text-xs font-bold text-white transition-all hover:opacity-90 active:scale-95"
             >
               {t("products.notify_me")}
             </button>
@@ -117,23 +116,22 @@ const ProductCard = ({ product }: { product: Product }) => {
         )}
       </div>
 
-      {/* Info */}
-      <div className="p-4 space-y-2">
-        <h3 className="text-sm font-medium text-foreground line-clamp-2 leading-snug min-h-[2.5rem]">
+      <div className="space-y-3 p-4">
+        <h3 className="min-h-[2.5rem] line-clamp-2 text-sm font-semibold leading-snug text-foreground">
           {product.name}
         </h3>
         <div className="flex items-end justify-between">
           <div>
-            <p className="text-lg font-bold text-primary">{formatPrice(product.price)}</p>
-            <p className="text-[10px] text-muted-foreground">{t("unit.per")} {product.unit}</p>
+            <p className="text-lg font-bold text-foreground">{formatPrice(product.price)}</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">{t("unit.per")} {product.unit}</p>
           </div>
           <button
             onClick={handleAdd}
             disabled={!product.inStock}
-            className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all ${
+            className={`flex h-10 w-10 items-center justify-center rounded-xl border transition-all ${
               inCart
-                ? "bg-green-500 text-primary-foreground"
-                : "bg-primary text-primary-foreground hover:opacity-90"
+                ? "border-green-500 bg-green-500 text-primary-foreground"
+                : "border-primary bg-primary text-primary-foreground hover:opacity-90"
             } disabled:opacity-40`}
           >
             {inCart ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}

@@ -1,4 +1,4 @@
-import { Truck, Shield, CreditCard, Clock, Headphones, Award, Sparkles, RefreshCcw } from "lucide-react";
+import { Truck, Shield, CreditCard, Headphones, Sparkles, RefreshCcw } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 
 const trustItems = [
@@ -13,30 +13,28 @@ const trustItems = [
 const TrustSection = () => {
   const { t } = useLanguage();
   return (
-    <section className="py-24 bg-[#050510] relative overflow-hidden">
-    <div className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-white/5 to-transparent" />
+    <section className="section-padding">
     <div className="container mx-auto px-4">
-      <div className="text-center mb-16">
-        <h2 className="text-3xl md:text-5xl font-black text-white mb-4 tracking-tighter">
+      <div className="mb-12 text-center">
+        <h2 className="mb-4 text-3xl font-black tracking-tighter text-foreground md:text-5xl">
           {t("trust.title")}
         </h2>
-        <p className="text-gray-500 max-w-2xl mx-auto text-sm md:text-base">
+        <p className="mx-auto max-w-2xl text-sm text-muted-foreground md:text-base">
           {t("trust.subtitle")}
         </p>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-6">
         {trustItems.map(({ icon: Icon, title, desc, color }) => (
-          <div key={title} className="group bg-white/[0.02] border border-white/5 rounded-[2.5rem] p-8 text-center hover:bg-white/[0.04] transition-all hover:-translate-y-2">
-            <div className={`w-14 h-14 mx-auto bg-white/5 rounded-2xl flex items-center justify-center mb-6 border border-white/10 group-hover:scale-110 transition-transform`}>
+          <div key={title} className="group rounded-[1.75rem] border border-border bg-card p-6 text-left transition-all hover:-translate-y-1">
+            <div className={`mb-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-muted ${color}`}>
               <Icon className={`w-6 h-6 ${color}`} />
             </div>
-            <h3 className="text-[10px] font-black text-white uppercase tracking-[0.2em] mb-2">{t(title)}</h3>
-            <p className="text-[11px] text-gray-500 leading-relaxed font-medium">{t(desc)}</p>
+            <h3 className="mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-foreground">{t(title)}</h3>
+            <p className="text-[11px] font-medium leading-relaxed text-muted-foreground">{t(desc)}</p>
           </div>
         ))}
       </div>
     </div>
-    <div className="absolute bottom-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-white/5 to-transparent" />
     </section>
   );
 };
