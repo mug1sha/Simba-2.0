@@ -10,9 +10,12 @@ def seed_data(db: Session | None = None):
     
     # Try different paths for the JSON file (Local vs Render)
     possible_paths = [
+        os.path.abspath(os.path.join(os.path.dirname(__file__), '../../frontend/src/data/products.json')), # Tracked frontend catalog in monorepo
         os.path.abspath(os.path.join(os.path.dirname(__file__), '../../simba_products (1).json')), # From app/
         os.path.abspath(os.path.join(os.getcwd(), '../simba_products (1).json')), # From backend/ root
-        os.path.abspath(os.path.join(os.getcwd(), 'simba_products (1).json')) # Current dir
+        os.path.abspath(os.path.join(os.getcwd(), 'simba_products (1).json')), # Current dir
+        os.path.abspath(os.path.join(os.getcwd(), '../frontend/src/data/products.json')), # From backend/ root to frontend data
+        os.path.abspath(os.path.join(os.getcwd(), 'frontend/src/data/products.json')), # Current dir to frontend data
     ]
     
     json_path = None
@@ -22,7 +25,7 @@ def seed_data(db: Session | None = None):
             break
             
     if not json_path:
-        print("Could not find simba_products (1).json")
+        print("Could not find a product catalog JSON file for seeding.")
         return
 
     print(f"Loading data from: {json_path}")
