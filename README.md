@@ -102,8 +102,10 @@ For production serving:
 
 ```bash
 cd backend
-gunicorn app.main:app -k uvicorn.workers.UvicornWorker
+gunicorn -w 1 app.main:app -k uvicorn.workers.UvicornWorker
 ```
+
+If `DATABASE_URL` is SQLite, keep Gunicorn on a single worker. SQLite is not a good fit for multi-process write traffic, so `-w 4` can produce `database is locked` failures. Use Postgres before scaling worker count up.
 
 ### Frontend Environment
 Set the API URL before building:

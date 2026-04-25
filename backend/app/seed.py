@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from .database import SessionLocal, engine
 from . import models
 
-def seed_data():
+def seed_data(db: Session | None = None):
     # Create tables
     models.Base.metadata.create_all(bind=engine)
     
@@ -29,13 +29,9 @@ def seed_data():
     with open(json_path, 'r') as f:
         data = json.load(f)
 
-    db = SessionLocal()
+    own_session = db is None
+    db = db or SessionLocal()
     try:
-        # Check if already seeded
-        if db.query(models.StoreInfo).first():
-            print("Database already seeded.")
-            return
-
         # Seed Store Info
         store_data = data['store']
         db_store = models.StoreInfo(
@@ -49,7 +45,14 @@ def seed_data():
 
         # Seed Products
         products_data = data['products']
+        existing_product_ids = {
+            product_id
+            for (product_id,) in db.query(models.Product.id).all()
+        }
+        created_products = 0
         for p in products_data:
+            if p['id'] in existing_product_ids:
+                continue
             db_product = models.Product(
                 id=p['id'],
                 name=p['name'],
@@ -60,15 +63,21 @@ def seed_data():
                 image=p['image'],
                 unit=p['unit']
             )
-            db.merge(db_product)
+            db.add(db_product)
+            created_products += 1
 
         db.commit()
-        print(f"Successfully seeded {len(products_data)} products.")
+        if created_products:
+            print(f"Successfully seeded {created_products} new products.")
+        else:
+            print("Database already seeded.")
     except Exception as e:
-        print(f"Error seeding data: {e}")
         db.rollback()
+        print(f"Error seeding data: {e}")
+        raise
     finally:
-        db.close()
+        if own_session:
+            db.close()
 
 if __name__ == "__main__":
     seed_data()

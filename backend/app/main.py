@@ -5,7 +5,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from . import crud, models, schemas, auth
-from .database import SessionLocal, engine, get_db, ensure_runtime_schema
+from .database import SessionLocal, engine, get_db, ensure_runtime_schema, sqlite_startup_lock
 from .email_service import read_dev_mailbox
 
 APP_ENV = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", "development")).lower()
@@ -37,14 +37,14 @@ def auth_action_response(status_text: str, message: str, email: str = None, deli
 # --- STARTUP & CORA ---
 @app.on_event("startup")
 def startup_event():
-    db = SessionLocal()
-    try:
-        if not db.query(models.StoreInfo).first():
+    with sqlite_startup_lock():
+        db = SessionLocal()
+        try:
             from .seed import seed_data
-            seed_data()
-        crud.seed_branch_stock(db)
-    finally:
-        db.close()
+            seed_data(db)
+            crud.seed_branch_stock(db)
+        finally:
+            db.close()
 
 app.add_middleware(
     CORSMiddleware,
@@ -299,7 +299,6 @@ def branch_no_show_order(order_id: int, db: Session = Depends(get_db)):
 
 @app.get("/api/branch/stock", response_model=List[schemas.BranchStock], tags=["Branch Operations"])
 def branch_stock(branch: str, search: Optional[str] = None, db: Session = Depends(get_db)):
-    crud.seed_branch_stock(db)
     return crud.get_branch_stock(db, branch=branch, search=search)
 
 @app.post("/api/branch/stock/{product_id}/out-of-stock", response_model=schemas.BranchStock, tags=["Branch Operations"])
