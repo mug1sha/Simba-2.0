@@ -60,10 +60,14 @@ const ChatWidget = () => {
   const { user, token } = useAuth();
   const { language, t } = useLanguage();
   const { addItem } = useCart();
+  const createGreeting = () =>
+    t("support.greeting", {
+      name: user?.first_name || t("support.greeting_default_name"),
+    });
   const [isOpen, setIsOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: "bot", text: `Hi ${user?.first_name || "there"}! 👋 How can Simba help you today?`, time: new Date() }
+    { role: "bot", text: createGreeting(), time: new Date() }
   ]);
   const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -98,6 +102,13 @@ const ChatWidget = () => {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, isTyping]);
+
+  useEffect(() => {
+    setMessages((prev) => {
+      if (prev.length !== 1 || prev[0]?.role !== "bot") return prev;
+      return [{ ...prev[0], text: createGreeting() }];
+    });
+  }, [language, user?.first_name]);
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
