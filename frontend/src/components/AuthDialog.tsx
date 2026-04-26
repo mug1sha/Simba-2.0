@@ -4,6 +4,10 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/components/ui/use-toast";
 import { Eye, EyeOff, Mail, Lock, User, ShoppingBag, ArrowRight, CheckCircle2, Phone, LucideIcon } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { getRoleDashboardPath, type UserRole } from "@/lib/auth";
+import { readErrorMessage } from "@/lib/api";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 interface AuthDialogProps {
   isOpen: boolean;
@@ -23,12 +27,12 @@ const panelSwitch: Variants = {
   exit: (d: number) => ({ x: d < 0 ? 50 : -50, opacity: 0, transition: { duration: 0.15 } }),
 };
 
-const STRENGTH_DATA = [
-  { label: "Very Weak", color: "bg-red-500" },
-  { label: "Weak", color: "bg-orange-500" },
-  { label: "Medium", color: "bg-yellow-500" },
-  { label: "Strong", color: "bg-green-500" },
-  { label: "Very Strong", color: "bg-blue-500" },
+const STRENGTH_COLORS = [
+  "bg-red-500",
+  "bg-orange-500",
+  "bg-yellow-500",
+  "bg-green-500",
+  "bg-blue-500",
 ];
 
 const getPwdStrength = (p: string) => {
@@ -63,6 +67,7 @@ const Field: React.FC<{ id: string; type?: string; placeholder: string; value: s
 );
 
 export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
+  const navigate = useNavigate();
   const [view, setView] = useState<AuthState>("LOGIN");
   const [dir, setDir] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -78,38 +83,50 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
   const [showPwd, setShowPwd] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [agreed, setAgreed] = useState(false);
+  const [selectedRole, setSelectedRole] = useState<UserRole>("customer");
 
   const strength = getPwdStrength(pwd);
 
   const { login } = useAuth();
   const { toast } = useToast();
+  const { t } = useLanguage();
+  const strengthLabels = [
+    t("auth.strength.very_weak"),
+    t("auth.strength.weak"),
+    t("auth.strength.medium"),
+    t("auth.strength.strong"),
+    t("auth.strength.very_strong"),
+  ];
 
   const handleSwitch = (newView: AuthState, d: number) => { setDir(d); setView(newView); setNeedsVerificationEmail(false); };
-  const reset = () => { setEmail(""); setPhone(""); setPwd(""); setFirstName(""); setLastName(""); setConfirmPwd(""); setAgreed(false); setNeedsVerificationEmail(false); setView("LOGIN"); };
+  const reset = () => { setEmail(""); setPhone(""); setPwd(""); setFirstName(""); setLastName(""); setConfirmPwd(""); setAgreed(false); setNeedsVerificationEmail(false); setSelectedRole("customer"); setView("LOGIN"); };
   const handleClose = () => { reset(); onClose(); };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault(); setLoading(true);
     try {
-      const form = new URLSearchParams();
-      form.append("username", email); form.append("password", pwd);
-      const res = await fetch("/api/auth/login", { method: "POST", body: form });
-      if (!res.ok) throw new Error((await res.json()).detail || "Login failed");
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: pwd, role: selectedRole }),
+      });
+      if (!res.ok) throw new Error(await readErrorMessage(res, "Login failed"));
       const data = await res.json();
       setNeedsVerificationEmail(false);
-      login(data.access_token);
-      toast({ title: "Welcome back! 🎉", description: `Logged in as ${email}` });
+      const loggedInUser = await login(data);
+      toast({ title: t("auth.toast.welcome_back"), description: t("auth.toast.logged_in_as", { email }) });
       handleClose();
+      navigate(getRoleDashboardPath(loggedInUser?.role || selectedRole));
     } catch (err: any) {
       const message = err.message || "Login failed";
       setNeedsVerificationEmail(message.toLowerCase().includes("verify"));
-      toast({ title: "Login Failed", description: message, variant: "destructive" });
+      toast({ title: t("auth.toast.login_failed"), description: message, variant: "destructive" });
     }
     finally { setLoading(false); }
   };
 
   const handleResendVerification = async () => {
-    if (!email) return toast({ title: "Email Required", description: "Enter your email address first.", variant: "destructive" });
+    if (!email) return toast({ title: t("auth.toast.email_required"), description: t("auth.toast.enter_email_first"), variant: "destructive" });
     setLoading(true);
     try {
       const res = await fetch("/api/auth/resend-verification", {
@@ -117,18 +134,18 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email })
       });
-      if (!res.ok) throw new Error((await res.json()).detail || "Could not resend verification email");
+      if (!res.ok) throw new Error(await readErrorMessage(res, "Could not resend verification email"));
       const data = await res.json();
       setSuccessInfo({
-        title: "Verification link sent",
+        title: t("auth.success.verification_link_sent"),
         message: data.dev_link
-          ? "Local development email is ready. Use the link below to verify this account."
+          ? t("auth.success.local_verify_email_ready")
           : data.message,
         link: data.dev_link,
       });
       handleSwitch("SUCCESS_MSG", 1);
     } catch (err: any) {
-      toast({ title: "Verification Failed", description: err.message, variant: "destructive" });
+      toast({ title: t("auth.toast.verification_failed"), description: err.message, variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -136,9 +153,9 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (pwd !== confirmPwd) return toast({ title: "Error", description: "Passwords do not match", variant: "destructive" });
-    if (!agreed) return toast({ title: "Error", description: "Please agree to Terms", variant: "destructive" });
-    if (strength < 4) return toast({ title: "Weak Password", description: "Please create a stronger password (Medium or better).", variant: "destructive" });
+    if (pwd !== confirmPwd) return toast({ title: t("common.error"), description: t("auth.toast.passwords_do_not_match"), variant: "destructive" });
+    if (!agreed) return toast({ title: t("common.error"), description: t("auth.toast.agree_terms"), variant: "destructive" });
+    if (strength < 4) return toast({ title: t("auth.toast.weak_password"), description: t("auth.toast.create_stronger_password"), variant: "destructive" });
     
     setLoading(true);
     try {
@@ -147,17 +164,17 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
         headers: { "Content-Type": "application/json" }, 
         body: JSON.stringify({ email, phone, password: pwd, first_name: firstName, last_name: lastName }) 
       });
-      if (!res.ok) throw new Error((await res.json()).detail || "Signup failed");
+      if (!res.ok) throw new Error(await readErrorMessage(res, "Signup failed"));
       const data = await res.json();
       setSuccessInfo({
-        title: "Check your email! 📧",
+        title: t("auth.success.check_email"),
         message: data.dev_link
-          ? "Local development email is ready. Use the link below to verify this account."
+          ? t("auth.success.local_signup_email_ready")
           : data.message,
         link: data.dev_link,
       });
       handleSwitch("SUCCESS_MSG", 1);
-    } catch (err: any) { toast({ title: "Signup Failed", description: err.message, variant: "destructive" }); }
+    } catch (err: any) { toast({ title: t("auth.toast.signup_failed"), description: err.message, variant: "destructive" }); }
     finally { setLoading(false); }
   };
 
@@ -165,17 +182,17 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
     e.preventDefault(); setLoading(true);
     try {
       const res = await fetch("/api/auth/forgot-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
-      if (!res.ok) throw new Error("Request failed");
+      if (!res.ok) throw new Error(await readErrorMessage(res, "Request failed"));
       const data = await res.json();
       setSuccessInfo({
-        title: "Reset link sent! 🗝️",
+        title: t("auth.success.reset_link_sent"),
         message: data.dev_link
-          ? "Local development reset email is ready. Use the link below to set a new password."
+          ? t("auth.success.local_reset_email_ready")
           : data.message,
         link: data.dev_link,
       });
       handleSwitch("SUCCESS_MSG", 1);
-    } catch (err: any) { toast({ title: "Error", description: "Could not process request", variant: "destructive" }); }
+    } catch (err: any) { toast({ title: t("common.error"), description: t("auth.toast.request_failed"), variant: "destructive" }); }
     finally { setLoading(false); }
   };
 
@@ -197,75 +214,101 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
               {view === "LOGIN" && (
                 <motion.form key="login" custom={dir} variants={panelSwitch} initial="enter" animate="center" exit="exit" onSubmit={handleLogin} className="space-y-4">
                   <div className="text-center mb-6">
-                    <h3 className="text-white text-xl font-bold">Welcome Back</h3>
-                    <p className="text-gray-500 text-sm">Sign in to your account</p>
+                    <h3 className="text-white text-xl font-bold">{t("auth.login.title")}</h3>
+                    <p className="text-gray-500 text-sm">{t("auth.login.subtitle")}</p>
                   </div>
-                  <Field id="l-email" type="email" placeholder="Email address" value={email} onChange={setEmail} Icon={Mail} />
-                  <Field id="l-pwd" placeholder="Password" value={pwd} onChange={setPwd} Icon={Lock} toggle visible={showPwd} onToggle={() => setShowPwd(!showPwd)} />
-                  <div className="text-right"><button type="button" onClick={() => handleSwitch("FORGOT_PASSWORD", 1)} className="text-primary text-xs hover:underline">Forgot password?</button></div>
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-1">
+                    <div className="grid grid-cols-3 gap-1">
+                      {[
+                        { id: "customer", label: t("auth.role.customer") },
+                        { id: "branch_manager", label: t("auth.role.manager") },
+                        { id: "branch_staff", label: t("auth.role.staff") },
+                      ].map((role) => (
+                        <button
+                          key={role.id}
+                          type="button"
+                          onClick={() => setSelectedRole(role.id as UserRole)}
+                          className={`rounded-xl px-3 py-2 text-[11px] font-black uppercase tracking-wide transition-all ${
+                            selectedRole === role.id ? "bg-primary text-white" : "text-gray-400 hover:text-white"
+                          }`}
+                        >
+                          {role.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <Field id="l-email" type="email" placeholder={t("auth.field.email")} value={email} onChange={setEmail} Icon={Mail} />
+                  <Field id="l-pwd" placeholder={t("auth.field.password")} value={pwd} onChange={setPwd} Icon={Lock} toggle visible={showPwd} onToggle={() => setShowPwd(!showPwd)} />
+                  {selectedRole !== "customer" && (
+                    <div className="rounded-2xl border border-primary/20 bg-primary/10 px-4 py-3 text-[11px] leading-relaxed text-primary">
+                      <p>{t("auth.invite.private_only")}</p>
+                      <p className="mt-1">{t("auth.invite.private_only_desc")}</p>
+                    </div>
+                  )}
+                  <div className="text-right"><button type="button" onClick={() => handleSwitch("FORGOT_PASSWORD", 1)} className="text-primary text-xs hover:underline">{t("auth.login.forgot_password")}</button></div>
                   <motion.button type="submit" disabled={loading} whileHover={{ y: -2 }} whileTap={{ scale: 0.98 }} className="w-full h-12 bg-primary text-white font-bold rounded-xl shadow-lg shadow-primary/20 flex items-center justify-center gap-2">
-                    {loading ? <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <>Login <ArrowRight className="w-4 h-4" /></>}
+                    {loading ? <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <>{t("auth.login.button")} <ArrowRight className="w-4 h-4" /></>}
                   </motion.button>
                   {needsVerificationEmail && (
                     <button type="button" onClick={handleResendVerification} disabled={loading} className="w-full h-11 rounded-xl border border-primary/20 bg-primary/10 text-primary text-xs font-bold hover:bg-primary/20 transition-all">
-                      Resend verification email
+                      {t("auth.login.resend_verification")}
                     </button>
                   )}
-                  <p className="text-center text-gray-500 text-sm">Don't have an account? <button type="button" onClick={() => handleSwitch("SIGNUP", 1)} className="text-primary font-semibold hover:underline">Sign up</button></p>
+                  <p className="text-center text-gray-500 text-sm">{t("auth.login.no_account")} <button type="button" onClick={() => handleSwitch("SIGNUP", 1)} className="text-primary font-semibold hover:underline">{t("auth.login.sign_up")}</button></p>
                 </motion.form>
               )}
 
               {view === "SIGNUP" && (
                 <motion.form key="signup" custom={dir} variants={panelSwitch} initial="enter" animate="center" exit="exit" onSubmit={handleSignup} className="space-y-3.5">
                   <div className="text-center mb-5 split">
-                    <h3 className="text-white text-xl font-bold">Create Account</h3>
-                    <p className="text-gray-500 text-sm">Join Simba Supermarket</p>
+                    <h3 className="text-white text-xl font-bold">{t("auth.signup.title")}</h3>
+                    <p className="text-gray-500 text-sm">{t("auth.signup.subtitle")}</p>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <Field id="s-fn" placeholder="First name" value={firstName} onChange={setFirstName} Icon={User} />
-                    <Field id="s-ln" placeholder="Last name" value={lastName} onChange={setLastName} Icon={User} />
+                    <Field id="s-fn" placeholder={t("auth.field.first_name")} value={firstName} onChange={setFirstName} Icon={User} />
+                    <Field id="s-ln" placeholder={t("auth.field.last_name")} value={lastName} onChange={setLastName} Icon={User} />
                   </div>
-                  <Field id="s-email" type="email" placeholder="Email address" value={email} onChange={setEmail} Icon={Mail} />
-                  <Field id="s-phone" type="tel" placeholder="Phone number (e.g. +250...)" value={phone} onChange={setPhone} Icon={Phone} />
+                  <Field id="s-email" type="email" placeholder={t("auth.field.email")} value={email} onChange={setEmail} Icon={Mail} />
+                  <Field id="s-phone" type="tel" placeholder={t("auth.field.phone")} value={phone} onChange={setPhone} Icon={Phone} />
                   <div className="space-y-1">
-                    <Field id="s-pwd" placeholder="Password" value={pwd} onChange={setPwd} Icon={Lock} toggle visible={showPwd} onToggle={() => setShowPwd(!showPwd)} />
+                    <Field id="s-pwd" placeholder={t("auth.field.password")} value={pwd} onChange={setPwd} Icon={Lock} toggle visible={showPwd} onToggle={() => setShowPwd(!showPwd)} />
                     {pwd && (
                       <div className="px-1">
                         <div className="flex gap-1 h-1 mt-2">
                           {[...Array(5)].map((_, i) => (
-                            <div key={i} className={`flex-1 rounded-full transition-all duration-500 ${i < strength ? STRENGTH_DATA[strength - 1].color : "bg-white/10"}`} />
+                            <div key={i} className={`flex-1 rounded-full transition-all duration-500 ${i < strength ? STRENGTH_COLORS[strength - 1] : "bg-white/10"}`} />
                           ))}
                         </div>
                         <p className="text-[10px] text-right mt-1 font-medium" style={{ color: strength > 0 ? "" : "gray" }}>
-                          {strength > 0 ? STRENGTH_DATA[strength - 1].label : "Start typing..."}
+                          {strength > 0 ? strengthLabels[strength - 1] : t("auth.strength.start_typing")}
                         </p>
                       </div>
                     )}
                   </div>
-                  <Field id="s-cpwd" placeholder="Confirm password" value={confirmPwd} onChange={setConfirmPwd} Icon={Lock} toggle visible={showConfirm} onToggle={() => setShowConfirm(!showConfirm)} />
+                  <Field id="s-cpwd" placeholder={t("auth.field.confirm_password")} value={confirmPwd} onChange={setConfirmPwd} Icon={Lock} toggle visible={showConfirm} onToggle={() => setShowConfirm(!showConfirm)} />
                   <label className="flex items-start gap-2.5 cursor-pointer group">
                     <input type="checkbox" className="hidden" checked={agreed} onChange={() => setAgreed(!agreed)} />
                     <div className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 ${agreed ? "bg-primary border-primary" : "border-white/20 bg-white/5"}`}>{agreed && <CheckCircle2 className="w-3 h-3 text-white" />}</div>
-                    <span className="text-gray-500 text-[11px] leading-relaxed">I agree to the <span className="text-primary group-hover:underline">Terms & Conditions</span></span>
+                    <span className="text-gray-500 text-[11px] leading-relaxed">{t("auth.signup.agree_prefix")} <span className="text-primary group-hover:underline">{t("auth.signup.terms")}</span></span>
                   </label>
                   <motion.button type="submit" disabled={loading} whileHover={{ y: -2 }} whileTap={{ scale: 0.98 }} className="w-full h-12 bg-primary text-white font-bold rounded-xl shadow-lg shadow-primary/20">
-                    {loading ? <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : "Create Account"}
+                    {loading ? <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : t("auth.signup.button")}
                   </motion.button>
-                  <p className="text-center text-gray-500 text-sm">Already registered? <button type="button" onClick={() => handleSwitch("LOGIN", -1)} className="text-primary font-semibold hover:underline">Login</button></p>
+                  <p className="text-center text-gray-500 text-sm">{t("auth.signup.already_registered")} <button type="button" onClick={() => handleSwitch("LOGIN", -1)} className="text-primary font-semibold hover:underline">{t("auth.login.button")}</button></p>
                 </motion.form>
               )}
 
               {view === "FORGOT_PASSWORD" && (
                 <motion.form key="forgot" custom={dir} variants={panelSwitch} initial="enter" animate="center" exit="exit" onSubmit={handleForgotPassword} className="space-y-5">
                   <div className="text-center mb-6">
-                    <h3 className="text-white text-xl font-bold">Forgot Password</h3>
-                    <p className="text-gray-500 text-sm">Enter your email to reset your password</p>
+                    <h3 className="text-white text-xl font-bold">{t("auth.forgot.title")}</h3>
+                    <p className="text-gray-500 text-sm">{t("auth.forgot.subtitle")}</p>
                   </div>
-                  <Field id="f-email" type="email" placeholder="Email address" value={email} onChange={setEmail} Icon={Mail} />
+                  <Field id="f-email" type="email" placeholder={t("auth.field.email")} value={email} onChange={setEmail} Icon={Mail} />
                   <motion.button type="submit" disabled={loading} whileHover={{ y: -2 }} whileTap={{ scale: 0.98 }} className="w-full h-12 bg-primary text-white font-bold rounded-xl">
-                    {loading ? <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : "Send Reset Link"}
+                    {loading ? <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : t("auth.forgot.button")}
                   </motion.button>
-                  <button type="button" onClick={() => handleSwitch("LOGIN", -1)} className="w-full text-gray-400 text-sm hover:text-white transition-colors">Back to Login</button>
+                  <button type="button" onClick={() => handleSwitch("LOGIN", -1)} className="w-full text-gray-400 text-sm hover:text-white transition-colors">{t("auth.common.back_to_login")}</button>
                 </motion.form>
               )}
 
@@ -280,11 +323,11 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
                   </div>
                   {successInfo.link && (
                     <a href={successInfo.link} className="block w-full h-12 bg-primary text-white font-semibold rounded-xl hover:brightness-110 transition-all leading-[3rem]">
-                      Open local email link
+                      {t("auth.success.open_local_email_link")}
                     </a>
                   )}
                   <motion.button onClick={() => handleSwitch("LOGIN", -1)} whileHover={{ y: -2 }} className="w-full h-12 bg-white/5 border border-white/10 text-white font-semibold rounded-xl hover:bg-white/10">
-                    Back to Login
+                    {t("auth.common.back_to_login")}
                   </motion.button>
                 </motion.div>
               )}

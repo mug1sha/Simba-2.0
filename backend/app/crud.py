@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from . import models, schemas
 from .auth import get_password_hash
-from .email_service import generate_token, send_verification_email, send_reset_password_email
+from .email_service import build_invite_link, generate_token, send_verification_email, send_reset_password_email
 from .groq_service import ask_groq
 
 VERIFICATION_TOKEN_EXPIRE_HOURS = 24
@@ -35,7 +35,6 @@ SEARCH_STOPWORDS = {
     "pour", "de", "du", "des", "le", "la", "les",
 }
 
-
 def extract_search_keywords(search: str) -> list[str]:
     return [
         word.strip(".,?!:;()[]{}\"'").lower()
@@ -58,6 +57,24 @@ def parse_groq_json(raw: str) -> dict | None:
             return json.loads(raw[start:end + 1])
         except json.JSONDecodeError:
             return None
+
+
+def branch_slug(branch: str) -> str:
+    return (
+        branch.lower()
+        .replace("simba", "")
+        .replace("/", " ")
+        .replace("-", " ")
+        .strip()
+        .replace(" ", "")
+    )
+
+
+def user_display_name(user: models.User | None) -> str:
+    if not user:
+        return ""
+    full_name = " ".join(part for part in [user.first_name, user.last_name] if part).strip()
+    return full_name or user.email
 
 # --- STORE ---
 def get_store_info(db: Session):
@@ -274,18 +291,22 @@ def update_product_price(db: Session, product_id: int, new_price: float):
 
 # --- AUTH & USERS ---
 def get_user_by_email(db: Session, email: str):
-    return db.query(models.User).filter(models.User.email == email).first()
+    normalized = normalize_email(email)
+    return db.query(models.User).filter(models.User.email == normalized).first()
 
 def create_user(db: Session, user: schemas.UserCreate):
     """Initialize new user with hashed password and verification token."""
     hashed_password = get_password_hash(user.password)
     v_token = generate_token()
+    role = user.role if user.role in {"customer", "branch_manager", "branch_staff"} else "customer"
     db_user = models.User(
-        email=user.email,
+        email=normalize_email(user.email),
         hashed_password=hashed_password,
         first_name=user.first_name,
         last_name=user.last_name,
         phone=user.phone,
+        role=role,
+        branch=user.branch if role != "customer" else None,
         is_verified=False,
         verification_token=v_token,
         verification_token_expires=(datetime.utcnow() + timedelta(hours=VERIFICATION_TOKEN_EXPIRE_HOURS)).isoformat()
@@ -322,6 +343,147 @@ def update_user(db: Session, user_id: int, user_update: schemas.UserUpdate):
         db.commit()
         db.refresh(db_user)
     return db_user
+
+def normalize_email(email: str | None) -> str | None:
+    if not email:
+        return None
+    return email.strip().lower()
+
+def is_invite_expired(invite: models.RoleInvite) -> bool:
+    return datetime.utcnow() > datetime.fromisoformat(invite.expires_at)
+
+def get_role_invite_by_token(db: Session, token: str):
+    return db.query(models.RoleInvite).filter(models.RoleInvite.token == token).first()
+
+def get_active_role_invite(db: Session, token: str):
+    invite = get_role_invite_by_token(db, token)
+    if not invite or invite.used_at or is_invite_expired(invite):
+        return None
+    return invite
+
+def serialize_role_invite(invite: models.RoleInvite):
+    return {
+        "email": invite.email,
+        "role": invite.role,
+        "branch": invite.branch,
+        "expires_at": invite.expires_at,
+        "invite_url": build_invite_link(invite.token),
+    }
+
+def create_role_invite(
+    db: Session,
+    role: str,
+    branch: str,
+    email: str | None = None,
+    created_by_user_id: int | None = None,
+    expires_hours: int = 72,
+):
+    if role not in {"branch_manager", "branch_staff"}:
+        raise ValueError("Invalid invite role")
+
+    invite = models.RoleInvite(
+        token=generate_token(),
+        email=normalize_email(email),
+        role=role,
+        branch=branch,
+        created_by_user_id=created_by_user_id,
+        created_at=datetime.utcnow().isoformat(),
+        expires_at=(datetime.utcnow() + timedelta(hours=expires_hours)).isoformat(),
+        used_at=None,
+    )
+    db.add(invite)
+    db.commit()
+    db.refresh(invite)
+    return invite
+
+def list_active_role_invites(db: Session, role: str | None = None):
+    query = db.query(models.RoleInvite).filter(models.RoleInvite.used_at.is_(None))
+    if role:
+        query = query.filter(models.RoleInvite.role == role)
+    invites = query.order_by(models.RoleInvite.created_at.desc()).all()
+    return [invite for invite in invites if not is_invite_expired(invite)]
+
+def accept_role_invite(db: Session, token: str, req: schemas.RoleInviteAcceptRequest):
+    invite = get_active_role_invite(db, token)
+    if not invite:
+        return None, "This invite link is invalid or has expired"
+
+    email = normalize_email(req.email)
+    if invite.email and email != invite.email:
+        return None, "This invite can only be used with the invited email address"
+
+    existing_user = get_user_by_email(db, email)
+    if existing_user:
+        return None, "An account with this email already exists"
+
+    user = models.User(
+        email=email,
+        hashed_password=get_password_hash(req.password),
+        first_name=req.first_name,
+        last_name=req.last_name,
+        phone=req.phone,
+        role=invite.role,
+        branch=invite.branch,
+        is_verified=True,
+        verification_token=None,
+        verification_token_expires=None,
+    )
+    db.add(user)
+    db.flush()
+
+    invite.used_at = datetime.utcnow().isoformat()
+    invite.used_by_user_id = user.id
+    db.commit()
+    db.refresh(user)
+    return user, None
+
+def delete_demo_branch_operations_users(db: Session):
+    demo_users = db.query(models.User).filter(
+        models.User.email.like("%@simba.demo"),
+        models.User.role.in_(["branch_manager", "branch_staff"]),
+    ).all()
+    if not demo_users:
+        return
+
+    demo_user_ids = [user.id for user in demo_users]
+    db.query(models.Order).filter(models.Order.assigned_staff_user_id.in_(demo_user_ids)).update(
+        {
+            models.Order.assigned_staff_user_id: None,
+            models.Order.assigned_staff: None,
+        },
+        synchronize_session=False,
+    )
+    for user in demo_users:
+        db.delete(user)
+    db.commit()
+
+def seed_initial_manager_invites(db: Session):
+    for branch in SIMBA_BRANCHES:
+        existing_manager = db.query(models.User).filter(
+            models.User.role == "branch_manager",
+            models.User.branch == branch,
+        ).first()
+        if existing_manager:
+            continue
+
+        active_invite = next(
+            (
+                invite for invite in list_active_role_invites(db, role="branch_manager")
+                if invite.branch == branch
+            ),
+            None,
+        )
+        if active_invite:
+            continue
+        create_role_invite(db, role="branch_manager", branch=branch, expires_hours=24 * 14)
+
+def list_branch_staff(db: Session, branch: str):
+    return (
+        db.query(models.User)
+        .filter(models.User.role == "branch_staff", models.User.branch == branch)
+        .order_by(models.User.first_name.asc(), models.User.last_name.asc(), models.User.email.asc())
+        .all()
+    )
 
 def verify_email(db: Session, token: str):
     """Confirm user email via verification token."""
@@ -475,46 +637,143 @@ def create_order(db: Session, user_id: int, order: schemas.OrderCreate):
             ntype="Order",
             title=f"Pickup order sent to {db_order.pickup_branch}",
             message="Your pickup order is waiting for the branch manager to assign it to staff.",
-            link="/profile"
+            link="/customer"
         )
     return db_order
 
-def get_branch_orders(db: Session, branch: str = None, staff_member: str = None):
-    query = db.query(models.Order).filter(models.Order.fulfillment_type == "pickup")
-    if branch:
-        query = query.filter(models.Order.pickup_branch == branch)
-    if staff_member:
-        query = query.filter(models.Order.assigned_staff == staff_member)
+def get_branch_orders(db: Session, user: models.User, status: str | None = None):
+    query = db.query(models.Order).filter(
+        models.Order.fulfillment_type == "pickup",
+        models.Order.pickup_branch == user.branch,
+    )
+    if user.role == "branch_staff":
+        query = query.filter(models.Order.assigned_staff_user_id == user.id)
+    if status:
+        query = query.filter(models.Order.status == status)
     return query.order_by(models.Order.created_at.desc()).all()
 
-def assign_branch_order(db: Session, order_id: int, staff_member: str):
-    order = db.query(models.Order).filter(models.Order.id == order_id).first()
-    if not order:
+def accept_branch_order(db: Session, order_id: int, manager_user: models.User):
+    order = db.query(models.Order).filter(
+        models.Order.id == order_id,
+        models.Order.pickup_branch == manager_user.branch,
+        models.Order.fulfillment_type == "pickup",
+    ).first()
+    if not order or order.status != "Pending":
         return None
-    order.assigned_staff = staff_member
+
+    order.status = "Accepted"
+    order.updated_at = str(datetime.utcnow())
+    db.commit()
+    db.refresh(order)
+    create_notification(
+        db,
+        user_id=order.user_id,
+        ntype="Order",
+        title=f"Order #{order.id} accepted",
+        message=f"The branch manager at {order.pickup_branch} accepted your order and will assign it to staff shortly.",
+        link="/customer",
+    )
+    return order
+
+def assign_branch_order(db: Session, order_id: int, staff_user_id: int, manager_user: models.User):
+    order = db.query(models.Order).filter(
+        models.Order.id == order_id,
+        models.Order.pickup_branch == manager_user.branch,
+        models.Order.fulfillment_type == "pickup",
+    ).first()
+    staff_user = db.query(models.User).filter(
+        models.User.id == staff_user_id,
+        models.User.role == "branch_staff",
+        models.User.branch == manager_user.branch,
+    ).first()
+    if not order or not staff_user or order.status != "Accepted":
+        return None
+
+    order.assigned_staff_user_id = staff_user.id
+    order.assigned_staff = user_display_name(staff_user)
     order.status = "Assigned"
     order.updated_at = str(datetime.utcnow())
     db.commit()
     db.refresh(order)
+    create_notification(
+        db,
+        user_id=order.user_id,
+        ntype="Order",
+        title=f"Order #{order.id} assigned to branch staff",
+        message=f"Your pickup order at {order.pickup_branch} is now assigned and queued for preparation.",
+        link="/customer",
+    )
     return order
 
-def update_branch_order_status(db: Session, order_id: int, status_text: str):
-    order = db.query(models.Order).filter(models.Order.id == order_id).first()
-    if not order:
+def mark_branch_order_preparing(db: Session, order_id: int, staff_user: models.User):
+    order = db.query(models.Order).filter(
+        models.Order.id == order_id,
+        models.Order.pickup_branch == staff_user.branch,
+        models.Order.assigned_staff_user_id == staff_user.id,
+        models.Order.fulfillment_type == "pickup",
+    ).first()
+    if not order or order.status != "Assigned":
         return None
-    order.status = status_text
+
+    order.status = "Preparing"
     order.updated_at = str(datetime.utcnow())
     db.commit()
     db.refresh(order)
-    if status_text == "Ready for Pick-up":
-        create_notification(
-            db,
-            user_id=order.user_id,
-            ntype="Order",
-            title=f"Order #{order.id} is ready for pick-up",
-            message=f"Your order is ready at {order.pickup_branch}.",
-            link="/profile"
-        )
+    create_notification(
+        db,
+        user_id=order.user_id,
+        ntype="Order",
+        title=f"Order #{order.id} is being prepared",
+        message=f"The branch team at {order.pickup_branch} started preparing your order.",
+        link="/customer",
+    )
+    return order
+
+def mark_branch_order_ready(db: Session, order_id: int, staff_user: models.User):
+    order = db.query(models.Order).filter(
+        models.Order.id == order_id,
+        models.Order.pickup_branch == staff_user.branch,
+        models.Order.assigned_staff_user_id == staff_user.id,
+        models.Order.fulfillment_type == "pickup",
+    ).first()
+    if not order or order.status != "Preparing":
+        return None
+
+    order.status = "Ready for Pick-up"
+    order.updated_at = str(datetime.utcnow())
+    db.commit()
+    db.refresh(order)
+    create_notification(
+        db,
+        user_id=order.user_id,
+        ntype="Order",
+        title=f"Order #{order.id} is ready for pick-up",
+        message=f"Your order is ready at {order.pickup_branch}.",
+        link="/customer",
+    )
+    return order
+
+def complete_branch_order(db: Session, order_id: int, manager_user: models.User):
+    order = db.query(models.Order).filter(
+        models.Order.id == order_id,
+        models.Order.pickup_branch == manager_user.branch,
+        models.Order.fulfillment_type == "pickup",
+    ).first()
+    if not order or order.status != "Ready for Pick-up":
+        return None
+
+    order.status = "Completed"
+    order.updated_at = str(datetime.utcnow())
+    db.commit()
+    db.refresh(order)
+    create_notification(
+        db,
+        user_id=order.user_id,
+        ntype="Order",
+        title=f"Order #{order.id} completed",
+        message=f"Your pick-up at {order.pickup_branch} is complete. Thank you for shopping with Simba.",
+        link="/customer",
+    )
     return order
 
 def create_or_update_branch_review(db: Session, user_id: int, order_id: int, review: schemas.BranchReviewCreate):
@@ -527,6 +786,7 @@ def create_or_update_branch_review(db: Session, user_id: int, order_id: int, rev
         or order.fulfillment_type != "pickup"
         or not order.pickup_branch
         or order.status in {"Cancelled", "Returned"}
+        or order.status not in {"Completed", "Picked Up"}
     ):
         return None
 
@@ -578,8 +838,11 @@ def get_branch_ratings(db: Session):
         })
     return ratings
 
-def flag_customer_no_show(db: Session, order_id: int):
-    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+def flag_customer_no_show(db: Session, order_id: int, branch: str | None = None):
+    query = db.query(models.Order).filter(models.Order.id == order_id)
+    if branch:
+        query = query.filter(models.Order.pickup_branch == branch)
+    order = query.first()
     if not order:
         return None
     existing = db.query(models.CustomerFlag).filter(
@@ -628,7 +891,7 @@ def cancel_order(db: Session, user_id: int, order_id: int):
         models.Order.id == order_id,
         models.Order.user_id == user_id
     ).first()
-    if not db_order or db_order.status not in {"Pending", "Assigned", "Preparing", "Processing"}:
+    if not db_order or db_order.status not in {"Pending", "Accepted", "Assigned"}:
         return None
 
     db_order.status = "Cancelled"

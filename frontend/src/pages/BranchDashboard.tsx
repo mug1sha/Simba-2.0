@@ -1,10 +1,20 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Clock, MapPin, PackageCheck, Play, Search, UserRound, Users } from "lucide-react";
+import {
+  CheckCircle2,
+  Clock3,
+  Copy,
+  PackageCheck,
+  Play,
+  Search,
+  ShoppingBag,
+  UserRound,
+  Users,
+} from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
 import { formatPrice } from "@/lib/products";
-import { BRANCH_NAMES } from "@/lib/branches";
-
-type BranchRole = "manager" | "staff";
+import { toast } from "sonner";
+import { readErrorMessage } from "@/lib/api";
 
 type BranchOrder = {
   id: number;
@@ -13,35 +23,51 @@ type BranchOrder = {
   status: string;
   pickup_branch?: string;
   pickup_time?: string;
-  deposit_amount?: number;
-  deposit_method?: string;
   assigned_staff?: string;
+  assigned_staff_user_id?: number | null;
+  customer_name?: string | null;
+  customer_phone?: string | null;
   created_at: string;
+};
+
+type BranchStaffMember = {
+  id: number;
+  email: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  branch?: string | null;
 };
 
 type BranchStock = {
   id: number;
-  branch: string;
   product_id: number;
   stock_count: number;
-  updated_at?: string;
   product: {
     id: number;
     name: string;
     price: number;
     image: string;
     category: string;
-    unit: string;
   };
 };
 
+type RoleInviteLink = {
+  email?: string | null;
+  role: string;
+  branch?: string | null;
+  expires_at: string;
+  invite_url: string;
+};
+
 const statusClass: Record<string, string> = {
-  Pending: "bg-yellow-500/15 text-yellow-300 border-yellow-500/20",
-  Assigned: "bg-blue-500/15 text-blue-300 border-blue-500/20",
-  Preparing: "bg-orange-500/15 text-orange-300 border-orange-500/20",
-  "Ready for Pick-up": "bg-green-500/15 text-green-300 border-green-500/20",
-  "Picked Up": "bg-white/10 text-gray-300 border-white/10",
-  "No-show": "bg-red-500/15 text-red-300 border-red-500/20",
+  Pending: "bg-yellow-500/12 text-yellow-300 border-yellow-500/20",
+  Accepted: "bg-sky-500/12 text-sky-300 border-sky-500/20",
+  Assigned: "bg-blue-500/12 text-blue-300 border-blue-500/20",
+  Preparing: "bg-orange-500/12 text-orange-300 border-orange-500/20",
+  "Ready for Pick-up": "bg-green-500/12 text-green-300 border-green-500/20",
+  Completed: "bg-emerald-500/12 text-emerald-300 border-emerald-500/20",
+  "No-show": "bg-red-500/12 text-red-300 border-red-500/20",
+  Cancelled: "bg-white/8 text-gray-300 border-white/10",
 };
 
 const parseItems = (items: string) => {
@@ -52,263 +78,462 @@ const parseItems = (items: string) => {
   }
 };
 
+const getStaffLabel = (staff: BranchStaffMember) => {
+  const fullName = [staff.first_name, staff.last_name].filter(Boolean).join(" ").trim();
+  return fullName || staff.email;
+};
+
 const BranchDashboard = () => {
   const queryClient = useQueryClient();
-  const [role, setRole] = useState<BranchRole>("manager");
-  const [branch, setBranch] = useState(BRANCH_NAMES[0]);
-  const [staffMember, setStaffMember] = useState("Aline");
+  const { token, user } = useAuth();
+  const [statusFilter, setStatusFilter] = useState("all");
   const [stockSearch, setStockSearch] = useState("");
+  const [staffInviteEmail, setStaffInviteEmail] = useState("");
+  const [latestStaffInvite, setLatestStaffInvite] = useState<RoleInviteLink | null>(null);
 
-  const { data: staff = [] } = useQuery<string[]>({
-    queryKey: ["branch-staff"],
+  const isManager = user?.role === "branch_manager";
+  const isStaff = user?.role === "branch_staff";
+  const branchName = user?.branch || "Unassigned Branch";
+
+  const { data: staffMembers = [] } = useQuery<BranchStaffMember[]>({
+    queryKey: ["branch-staff", branchName],
     queryFn: async () => {
-      const res = await fetch("/api/branch/staff");
-      if (!res.ok) throw new Error("Failed to fetch staff");
+      const res = await fetch("/api/branch/staff", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to load branch staff");
       return res.json();
     },
+    enabled: !!token && !!user && (isManager || isStaff),
   });
 
-  const { data: orders = [], isLoading } = useQuery<BranchOrder[]>({
-    queryKey: ["branch-orders", role, branch, staffMember],
+  const { data: orders = [], isLoading: ordersLoading } = useQuery<BranchOrder[]>({
+    queryKey: ["branch-orders", branchName, statusFilter, user?.role],
     queryFn: async () => {
-      const params = new URLSearchParams({ branch });
-      if (role === "staff") params.set("staff_member", staffMember);
-      const res = await fetch(`/api/branch/orders?${params.toString()}`);
-      if (!res.ok) throw new Error("Failed to fetch orders");
+      const params = new URLSearchParams();
+      if (statusFilter !== "all") params.set("status", statusFilter);
+      const res = await fetch(`/api/branch/orders?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to load branch orders");
       return res.json();
     },
+    enabled: !!token && !!user,
     refetchInterval: 5000,
   });
 
   const { data: stock = [], isLoading: stockLoading } = useQuery<BranchStock[]>({
-    queryKey: ["branch-stock", branch, stockSearch],
+    queryKey: ["branch-stock", branchName, stockSearch],
     queryFn: async () => {
-      const params = new URLSearchParams({ branch });
+      const params = new URLSearchParams();
       if (stockSearch.trim()) params.set("search", stockSearch.trim());
-      const res = await fetch(`/api/branch/stock?${params.toString()}`);
-      if (!res.ok) throw new Error("Failed to fetch branch stock");
+      const res = await fetch(`/api/branch/stock?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to load branch stock");
       return res.json();
     },
+    enabled: !!token && !!user && isManager,
   });
 
   const action = useMutation({
-    mutationFn: async ({ orderId, endpoint, staff }: { orderId: number; endpoint: string; staff?: string }) => {
+    mutationFn: async ({ orderId, endpoint, body }: { orderId: number; endpoint: string; body?: Record<string, unknown> }) => {
       const res = await fetch(`/api/branch/orders/${orderId}/${endpoint}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: endpoint === "assign" ? JSON.stringify({ staff_member: staff }) : undefined,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: body ? JSON.stringify(body) : undefined,
       });
-      if (!res.ok) throw new Error("Action failed");
+      if (!res.ok) throw new Error(await readErrorMessage(res, "Action failed"));
       return res.json();
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["branch-orders"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["branch-orders"] });
+      toast.success("Order updated");
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const markOutOfStock = useMutation({
     mutationFn: async (productId: number) => {
-      const params = new URLSearchParams({ branch });
-      const res = await fetch(`/api/branch/stock/${productId}/out-of-stock?${params.toString()}`, { method: "POST" });
+      const res = await fetch(`/api/branch/stock/${productId}/out-of-stock`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (!res.ok) throw new Error("Stock update failed");
       return res.json();
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["branch-stock"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["branch-stock"] });
+      toast.success("Stock updated");
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 
-  const counts = useMemo(() => ({
-    pending: orders.filter((order) => order.status === "Pending").length,
-    preparing: orders.filter((order) => order.status === "Preparing").length,
-    ready: orders.filter((order) => order.status === "Ready for Pick-up").length,
-  }), [orders]);
+  const createStaffInvite = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/branch/staff/invites", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ email: staffInviteEmail.trim() || null }),
+      });
+      if (!res.ok) throw new Error(await readErrorMessage(res, "Failed to create invite link"));
+      return res.json() as Promise<RoleInviteLink>;
+    },
+    onSuccess: (invite) => {
+      setLatestStaffInvite(invite);
+      toast.success("Staff invite link created");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const availableFilters = isManager
+    ? ["all", "Pending", "Accepted", "Assigned", "Preparing", "Ready for Pick-up", "Completed"]
+    : ["all", "Assigned", "Preparing", "Ready for Pick-up", "Completed"];
+
+  const summaryCards = useMemo(() => {
+    const countByStatus = (status: string) => orders.filter((order) => order.status === status).length;
+    return [
+      {
+        label: isManager ? "Pending review" : "Assigned to you",
+        value: isManager ? countByStatus("Pending") : countByStatus("Assigned"),
+        icon: Clock3,
+      },
+      {
+        label: "Preparing now",
+        value: countByStatus("Preparing"),
+        icon: Play,
+      },
+      {
+        label: "Ready for pick-up",
+        value: countByStatus("Ready for Pick-up"),
+        icon: PackageCheck,
+      },
+      {
+        label: isManager ? "Branch staff" : "Completed",
+        value: isManager ? staffMembers.length : countByStatus("Completed"),
+        icon: isManager ? Users : CheckCircle2,
+      },
+    ];
+  }, [isManager, orders, staffMembers.length]);
 
   return (
     <div className="min-h-screen bg-[#050510] text-white">
-      <header className="border-b border-white/10 bg-[#08081a]/95 sticky top-0 z-20 backdrop-blur-xl">
-        <div className="container mx-auto px-4 py-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.35em] text-primary font-black">Simba Operations</p>
-            <h1 className="text-2xl md:text-3xl font-black tracking-tight">Branch Dashboard</h1>
-          </div>
-          <div className="flex flex-wrap gap-3">
-            <div className="flex rounded-2xl border border-white/10 bg-white/[0.04] p-1">
-              {[
-                { id: "manager", label: "Branch Manager", icon: Users },
-                { id: "staff", label: "Branch Staff", icon: UserRound },
-              ].map(({ id, label, icon: Icon }) => (
-                <button
-                  key={id}
-                  onClick={() => setRole(id as BranchRole)}
-                  className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${role === id ? "bg-primary text-white" : "text-gray-400 hover:text-white"}`}
-                >
-                  <Icon className="h-4 w-4" />
-                  {label}
-                </button>
-              ))}
+      <header className="sticky top-0 z-20 border-b border-white/10 bg-[#08081a]/95 backdrop-blur-xl">
+        <div className="container mx-auto px-4 py-6">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.35em] text-primary">Simba Branch Operations</p>
+              <h1 className="mt-2 text-3xl font-black tracking-tight">
+                {isManager ? "Branch Manager Dashboard" : "Branch Staff Dashboard"}
+              </h1>
+              <p className="mt-2 text-sm text-gray-400">
+                {branchName} · {isManager ? "Manage every pickup order in your branch." : "Work only on the orders assigned to you."}
+              </p>
             </div>
-            <select value={branch} onChange={(e) => setBranch(e.target.value)} className="rounded-2xl border border-white/10 bg-[#101024] px-4 py-3 text-xs font-bold outline-none">
-              {BRANCH_NAMES.map((item) => <option key={item}>{item}</option>)}
-            </select>
-            {role === "staff" && (
-              <select value={staffMember} onChange={(e) => setStaffMember(e.target.value)} className="rounded-2xl border border-white/10 bg-[#101024] px-4 py-3 text-xs font-bold outline-none">
-                {staff.map((name) => <option key={name}>{name}</option>)}
-              </select>
-            )}
+            <div className="rounded-3xl border border-white/10 bg-white/[0.04] px-5 py-4 text-right">
+              <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">Signed in as</p>
+              <p className="mt-2 text-sm font-black text-white">
+                {user ? [user.first_name, user.last_name].filter(Boolean).join(" ").trim() || user.email : "Operations User"}
+              </p>
+              <p className="mt-1 text-xs text-primary">{isManager ? "Branch Manager" : "Branch Staff"}</p>
+            </div>
           </div>
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-8 space-y-6">
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {[
-            { label: "Pending", value: counts.pending, icon: Clock },
-            { label: "Preparing", value: counts.preparing, icon: Play },
-            { label: "Ready", value: counts.ready, icon: PackageCheck },
-          ].map(({ label, value, icon: Icon }) => (
-            <div key={label} className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
+      <main className="container mx-auto space-y-6 px-4 py-8">
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {summaryCards.map(({ label, value, icon: Icon }) => (
+            <div key={label} className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-5">
               <div className="flex items-center justify-between">
-                <span className="text-xs uppercase tracking-widest text-gray-500 font-black">{label}</span>
+                <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">{label}</span>
                 <Icon className="h-5 w-5 text-primary" />
               </div>
-              <p className="mt-3 text-3xl font-black">{value}</p>
+              <p className="mt-4 text-3xl font-black">{value}</p>
             </div>
           ))}
         </section>
 
-        <section className="rounded-3xl border border-white/10 bg-white/[0.03] overflow-hidden">
-          <div className="border-b border-white/10 p-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div>
-              <h2 className="text-lg font-black">Branch Inventory</h2>
-              <p className="text-xs text-gray-500 mt-1">Stock is tracked separately for {branch}. Updating this branch does not change other branches.</p>
+        <section className={`grid gap-6 ${isManager ? "xl:grid-cols-[1.1fr_0.9fr]" : ""}`}>
+          <div className="rounded-[2rem] border border-white/10 bg-white/[0.03]">
+            <div className="border-b border-white/10 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h2 className="text-xl font-black">
+                    {isManager ? "Branch order queue" : "Your assigned orders"}
+                  </h2>
+                  <p className="mt-1 text-sm text-gray-500">
+                    {isManager
+                      ? "Accept, assign, and complete pickup orders for your branch."
+                      : "Update preparation and ready-for-pickup states as work progresses."}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {availableFilters.map((status) => (
+                    <button
+                      key={status}
+                      type="button"
+                      onClick={() => setStatusFilter(status)}
+                      className={`rounded-full px-4 py-2 text-[11px] font-black uppercase tracking-widest transition-all ${
+                        statusFilter === status ? "bg-primary text-white" : "bg-white/[0.04] text-gray-400 hover:text-white"
+                      }`}
+                    >
+                      {status}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
-            <div className="relative w-full md:w-80">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
-              <input
-                value={stockSearch}
-                onChange={(e) => setStockSearch(e.target.value)}
-                placeholder="Search branch stock..."
-                className="w-full rounded-2xl border border-white/10 bg-[#101024] py-3 pl-10 pr-4 text-xs font-bold text-white outline-none placeholder:text-gray-600"
-              />
+
+            <div className="divide-y divide-white/10">
+              {ordersLoading ? (
+                <div className="p-10 text-center text-sm font-bold text-gray-500">Loading orders...</div>
+              ) : orders.length === 0 ? (
+                <div className="p-10 text-center text-sm font-bold text-gray-500">No orders match this queue.</div>
+              ) : (
+                orders.map((order) => {
+                  const items = parseItems(order.items);
+                  return (
+                    <article key={order.id} className="grid gap-5 p-5 lg:grid-cols-[1fr_auto]">
+                      <div className="space-y-4">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <h3 className="text-lg font-black">Order #{order.id}</h3>
+                          <span className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase ${statusClass[order.status] || "bg-white/10 text-gray-300 border-white/10"}`}>
+                            {order.status}
+                          </span>
+                          {order.assigned_staff && (
+                            <span className="text-xs text-gray-400">Assigned to {order.assigned_staff}</span>
+                          )}
+                        </div>
+
+                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                          <div className="rounded-2xl border border-white/5 bg-black/20 p-3">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">Customer</p>
+                            <p className="mt-1 text-sm font-bold text-white">{order.customer_name || "Unknown customer"}</p>
+                            <p className="text-xs text-gray-500">{order.customer_phone || "No phone on file"}</p>
+                          </div>
+                          <div className="rounded-2xl border border-white/5 bg-black/20 p-3">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">Pickup branch</p>
+                            <p className="mt-1 text-sm font-bold text-white">{order.pickup_branch}</p>
+                          </div>
+                          <div className="rounded-2xl border border-white/5 bg-black/20 p-3">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">Pickup time</p>
+                            <p className="mt-1 text-sm font-bold text-white">{order.pickup_time || "Not set"}</p>
+                          </div>
+                          <div className="rounded-2xl border border-white/5 bg-black/20 p-3">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">Order total</p>
+                            <p className="mt-1 text-sm font-bold text-white">{formatPrice(order.total)}</p>
+                          </div>
+                        </div>
+
+                        <div className="rounded-[1.5rem] border border-white/5 bg-black/20 p-4">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">Items</p>
+                          <div className="mt-3 space-y-2">
+                            {items.map((item: any) => (
+                              <div key={`${order.id}-${item.id}`} className="flex items-center gap-3 text-xs text-gray-300">
+                                <img src={item.image} alt={item.name} className="h-9 w-9 rounded-xl object-cover bg-white/5" />
+                                <span className="flex-1 truncate">{item.name}</span>
+                                <span className="font-black text-white">x{item.quantity}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <p className="text-xs text-gray-500">
+                          Ordered on {new Date(order.created_at).toLocaleString()}
+                        </p>
+                      </div>
+
+                      <div className="flex min-w-[220px] flex-col gap-2">
+                        {isManager && order.status === "Pending" && (
+                          <button
+                            type="button"
+                            onClick={() => action.mutate({ orderId: order.id, endpoint: "accept" })}
+                            className="rounded-2xl bg-primary px-4 py-3 text-xs font-black uppercase tracking-widest text-white transition-all hover:opacity-90"
+                          >
+                            Accept Order
+                          </button>
+                        )}
+
+                        {isManager && order.status === "Accepted" && staffMembers.map((staff) => (
+                          <button
+                            key={staff.id}
+                            type="button"
+                            onClick={() => action.mutate({
+                              orderId: order.id,
+                              endpoint: "assign",
+                              body: { staff_user_id: staff.id },
+                            })}
+                            className="rounded-2xl border border-primary/20 bg-primary/10 px-4 py-3 text-left text-xs font-black text-primary transition-all hover:bg-primary hover:text-white"
+                          >
+                            Assign Staff: {getStaffLabel(staff)}
+                          </button>
+                        ))}
+
+                        {isStaff && order.status === "Assigned" && (
+                          <button
+                            type="button"
+                            onClick={() => action.mutate({ orderId: order.id, endpoint: "start" })}
+                            className="rounded-2xl border border-orange-500/20 bg-orange-500/10 px-4 py-3 text-xs font-black uppercase tracking-widest text-orange-300 transition-all hover:bg-orange-500 hover:text-white"
+                          >
+                            Start Preparing
+                          </button>
+                        )}
+
+                        {isStaff && order.status === "Preparing" && (
+                          <button
+                            type="button"
+                            onClick={() => action.mutate({ orderId: order.id, endpoint: "ready" })}
+                            className="rounded-2xl border border-green-500/20 bg-green-500/10 px-4 py-3 text-xs font-black uppercase tracking-widest text-green-300 transition-all hover:bg-green-500 hover:text-white"
+                          >
+                            Mark Ready
+                          </button>
+                        )}
+
+                        {isManager && order.status === "Ready for Pick-up" && (
+                          <button
+                            type="button"
+                            onClick={() => action.mutate({ orderId: order.id, endpoint: "complete" })}
+                            className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-xs font-black uppercase tracking-widest text-emerald-300 transition-all hover:bg-emerald-500 hover:text-white"
+                          >
+                            Complete Order
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })
+              )}
             </div>
           </div>
 
-          {stockLoading ? (
-            <div className="p-10 text-center text-gray-500 text-sm font-bold">Loading stock...</div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 p-5">
-              {stock.slice(0, 24).map((item) => (
-                <div key={item.id} className="rounded-2xl border border-white/10 bg-black/20 p-3">
-                  <div className="flex gap-3">
-                    <img src={item.product.image} alt={item.product.name} className="h-12 w-12 rounded-xl object-cover bg-white/5" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-black text-white">{item.product.name}</p>
-                      <p className="text-[10px] text-gray-500">{item.product.category}</p>
-                      <div className="mt-2 flex items-center justify-between gap-3">
-                        <span className={`rounded-full px-2 py-1 text-[10px] font-black ${item.stock_count > 0 ? "bg-green-500/10 text-green-300" : "bg-red-500/10 text-red-300"}`}>
-                          {item.stock_count} in stock
-                        </span>
-                        <button
-                          onClick={() => markOutOfStock.mutate(item.product_id)}
-                          disabled={item.stock_count === 0}
-                          className="rounded-lg border border-red-500/20 bg-red-500/10 px-2 py-1 text-[10px] font-black text-red-300 hover:bg-red-500 hover:text-white disabled:opacity-40"
+          {isManager && (
+            <div className="space-y-6">
+              <section className="rounded-[2rem] border border-white/10 bg-white/[0.03]">
+                <div className="border-b border-white/10 p-5">
+                  <h2 className="text-xl font-black">Branch staff</h2>
+                  <p className="mt-1 text-sm text-gray-500">Only staff from {branchName} can be assigned orders here.</p>
+                </div>
+                <div className="space-y-4 p-5">
+                  <div className="rounded-[1.5rem] border border-primary/15 bg-primary/5 p-4">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-primary">Private staff invite</p>
+                    <p className="mt-2 text-sm text-gray-400">
+                      Generate a secret sign-up link for a staff member in {branchName}. Anyone with the link can create that branch staff account.
+                    </p>
+                    <div className="mt-4 flex flex-col gap-3">
+                      <input
+                        type="email"
+                        value={staffInviteEmail}
+                        onChange={(event) => setStaffInviteEmail(event.target.value)}
+                        placeholder="Optional invited email address"
+                        className="h-12 rounded-2xl border border-white/10 bg-[#101024] px-4 text-sm text-white outline-none placeholder:text-gray-600"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => createStaffInvite.mutate()}
+                        disabled={createStaffInvite.isPending}
+                        className="rounded-2xl bg-primary px-4 py-3 text-xs font-black uppercase tracking-widest text-white transition-all hover:opacity-90 disabled:opacity-60"
+                      >
+                        {createStaffInvite.isPending ? "Creating invite..." : "Create Staff Invite"}
+                      </button>
+                    </div>
+                    {latestStaffInvite && (
+                      <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">Latest invite link</p>
+                        <a
+                          href={latestStaffInvite.invite_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-2 block break-all text-sm text-primary hover:underline"
                         >
-                          Mark out
-                        </button>
+                          {latestStaffInvite.invite_url}
+                        </a>
+                        <div className="mt-3 flex items-center justify-between gap-3 text-xs text-gray-500">
+                          <span>Expires {new Date(latestStaffInvite.expires_at).toLocaleString()}</span>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await navigator.clipboard.writeText(latestStaffInvite.invite_url);
+                              toast.success("Invite link copied");
+                            }}
+                            className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 font-black text-white transition-all hover:bg-white/[0.08]"
+                          >
+                            <Copy className="h-4 w-4" />
+                            Copy
+                          </button>
+                        </div>
                       </div>
+                    )}
+                  </div>
+
+                  {staffMembers.map((staff) => (
+                    <div key={staff.id} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/15">
+                        <UserRound className="h-5 w-5 text-primary" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-black text-white">{getStaffLabel(staff)}</p>
+                        <p className="truncate text-xs text-gray-500">{staff.email}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="rounded-[2rem] border border-white/10 bg-white/[0.03]">
+                <div className="border-b border-white/10 p-5">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <h2 className="text-xl font-black">Branch inventory</h2>
+                      <p className="mt-1 text-sm text-gray-500">Quick branch stock visibility for pickup planning.</p>
+                    </div>
+                    <div className="relative w-full max-w-xs">
+                      <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+                      <input
+                        value={stockSearch}
+                        onChange={(event) => setStockSearch(event.target.value)}
+                        placeholder="Search branch stock..."
+                        className="w-full rounded-2xl border border-white/10 bg-[#101024] py-3 pl-11 pr-4 text-xs font-bold text-white outline-none placeholder:text-gray-600"
+                      />
                     </div>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </section>
 
-        <section className="rounded-3xl border border-white/10 bg-white/[0.03] overflow-hidden">
-          <div className="border-b border-white/10 p-5 flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-black">{role === "manager" ? "All Branch Orders" : `${staffMember}'s Assigned Orders`}</h2>
-              <p className="text-xs text-gray-500 flex items-center gap-2 mt-1"><MapPin className="h-3.5 w-3.5" /> {branch}</p>
-            </div>
-          </div>
-
-          {isLoading ? (
-            <div className="p-10 text-center text-gray-500 text-sm font-bold">Loading orders...</div>
-          ) : orders.length === 0 ? (
-            <div className="p-10 text-center text-gray-500 text-sm font-bold">No orders in this queue.</div>
-          ) : (
-            <div className="divide-y divide-white/10">
-              {orders.map((order) => {
-                const items = parseItems(order.items);
-                return (
-                  <article key={order.id} className="p-5 grid gap-5 lg:grid-cols-[1fr_auto]">
-                    <div className="space-y-4">
-                      <div className="flex flex-wrap items-center gap-3">
-                        <h3 className="font-black">Order #{order.id}</h3>
-                        <span className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase ${statusClass[order.status] || "bg-white/10 text-gray-300 border-white/10"}`}>
-                          {order.status}
-                        </span>
-                        {order.assigned_staff && <span className="text-xs text-gray-400">Assigned to {order.assigned_staff}</span>}
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                        <div className="rounded-2xl bg-black/20 border border-white/5 p-3">
-                          <p className="text-gray-500 font-black uppercase tracking-widest mb-1">Pickup</p>
-                          <p className="font-bold">{order.pickup_time || "Not set"}</p>
-                        </div>
-                        <div className="rounded-2xl bg-black/20 border border-white/5 p-3">
-                          <p className="text-gray-500 font-black uppercase tracking-widest mb-1">Deposit</p>
-                          <p className="font-bold">{formatPrice(order.deposit_amount || 0)}</p>
-                        </div>
-                        <div className="rounded-2xl bg-black/20 border border-white/5 p-3">
-                          <p className="text-gray-500 font-black uppercase tracking-widest mb-1">Total</p>
-                          <p className="font-bold">{formatPrice(order.total)}</p>
-                        </div>
-                      </div>
-                      <div className="space-y-2">
-                        {items.slice(0, 5).map((item: any) => (
-                          <div key={item.id} className="flex items-center gap-3 text-xs text-gray-300">
-                            <img src={item.image} alt={item.name} className="h-8 w-8 rounded-lg object-cover bg-white/5" />
-                            <span className="flex-1 truncate">{item.name}</span>
-                            <span className="font-black text-white">x{item.quantity}</span>
-                          </div>
-                        ))}
-                      </div>
+                <div className="space-y-3 p-5">
+                  {stockLoading ? (
+                    <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 p-8 text-center text-sm font-bold text-gray-500">
+                      Loading stock...
                     </div>
-
-                    <div className="flex flex-col gap-2 min-w-[180px]">
-                      {role === "manager" && order.status === "Pending" && (
-                        staff.map((name) => (
+                  ) : (
+                    stock.slice(0, 10).map((item) => (
+                      <div key={item.id} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/20 p-3">
+                        <img src={item.product.image} alt={item.product.name} className="h-12 w-12 rounded-xl object-cover bg-white/5" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-black text-white">{item.product.name}</p>
+                          <p className="text-[11px] text-gray-500">{item.product.category}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-xs font-black text-white">{item.stock_count} in stock</p>
                           <button
-                            key={name}
-                            onClick={() => action.mutate({ orderId: order.id, endpoint: "assign", staff: name })}
-                            className="rounded-xl bg-primary/10 border border-primary/20 px-4 py-2 text-xs font-black text-primary hover:bg-primary hover:text-white transition-all"
+                            type="button"
+                            disabled={item.stock_count === 0}
+                            onClick={() => markOutOfStock.mutate(item.product_id)}
+                            className="mt-2 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-red-300 transition-all hover:bg-red-500 hover:text-white disabled:opacity-40"
                           >
-                            Assign to {name}
+                            Mark out
                           </button>
-                        ))
-                      )}
-                      {role === "staff" && order.status === "Assigned" && (
-                        <button onClick={() => action.mutate({ orderId: order.id, endpoint: "start" })} className="rounded-xl bg-orange-500/10 border border-orange-500/20 px-4 py-3 text-xs font-black text-orange-300 hover:bg-orange-500 hover:text-white transition-all">
-                          Start Preparing
-                        </button>
-                      )}
-                      {role === "staff" && order.status === "Preparing" && (
-                        <button onClick={() => action.mutate({ orderId: order.id, endpoint: "ready" })} className="rounded-xl bg-green-500/10 border border-green-500/20 px-4 py-3 text-xs font-black text-green-300 hover:bg-green-500 hover:text-white transition-all">
-                          <CheckCircle2 className="inline h-4 w-4 mr-2" />
-                          Mark Ready
-                        </button>
-                      )}
-                      {role === "manager" && order.status === "Ready for Pick-up" && (
-                        <>
-                          <button onClick={() => action.mutate({ orderId: order.id, endpoint: "picked-up" })} className="rounded-xl bg-white/10 border border-white/10 px-4 py-3 text-xs font-black text-white hover:bg-white hover:text-[#08081a] transition-all">
-                            Customer Picked Up
-                          </button>
-                          <button onClick={() => action.mutate({ orderId: order.id, endpoint: "no-show" })} className="rounded-xl bg-red-500/10 border border-red-500/20 px-4 py-3 text-xs font-black text-red-300 hover:bg-red-500 hover:text-white transition-all">
-                            Flag No-show
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </article>
-                );
-              })}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
             </div>
           )}
         </section>

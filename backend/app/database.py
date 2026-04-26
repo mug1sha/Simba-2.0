@@ -60,6 +60,10 @@ def ensure_runtime_schema():
         user_columns = {
             row[1] for row in conn.execute(text("PRAGMA table_info(users)")).fetchall()
         }
+        if "role" not in user_columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN role VARCHAR DEFAULT 'customer'"))
+        if "branch" not in user_columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN branch VARCHAR"))
         if "verification_token_expires" not in user_columns:
             conn.execute(text("ALTER TABLE users ADD COLUMN verification_token_expires VARCHAR"))
 
@@ -78,6 +82,8 @@ def ensure_runtime_schema():
             conn.execute(text("ALTER TABLE orders ADD COLUMN deposit_method VARCHAR"))
         if "assigned_staff" not in order_columns:
             conn.execute(text("ALTER TABLE orders ADD COLUMN assigned_staff VARCHAR"))
+        if "assigned_staff_user_id" not in order_columns:
+            conn.execute(text("ALTER TABLE orders ADD COLUMN assigned_staff_user_id INTEGER"))
 
         branch_stock_columns = conn.execute(text("PRAGMA table_info(branch_stock)")).fetchall()
         if branch_stock_columns:

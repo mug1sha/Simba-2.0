@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ShoppingBag, ChevronRight, CheckCircle2, Globe, MapPin, Star } from "lucide-react";
+import { ShoppingBag, ChevronRight, CheckCircle2, Globe, MapPin, Star, User } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -18,14 +18,16 @@ const OrderCard = ({ order, onCancel }: OrderCardProps) => {
   const [reviewComment, setReviewComment] = useState("");
   const [reviewed, setReviewed] = useState(false);
   const items = JSON.parse(order.items || "[]");
+  const normalizedStatus = order.status === "Picked Up" ? "Completed" : order.status;
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case "Ready for Pick-up":
-      case "Picked Up":
+      case "Completed":
       case "Delivered": return "text-green-500 bg-green-500/10";
       case "Cancelled": return "text-red-500 bg-red-500/10";
       case "Shipped": return "text-blue-500 bg-blue-500/10";
+      case "Accepted":
       case "Assigned": return "text-blue-500 bg-blue-500/10";
       case "Preparing":
       case "Processing": return "text-orange-500 bg-orange-500/10";
@@ -33,16 +35,19 @@ const OrderCard = ({ order, onCancel }: OrderCardProps) => {
     }
   };
 
-  const pickupStatuses = ["Pending", "Assigned", "Preparing", "Ready for Pick-up", "Picked Up"];
+  const pickupStatuses = ["Pending", "Accepted", "Assigned", "Preparing", "Ready for Pick-up", "Completed"];
   const deliveryStatuses = ["Pending", "Processing", "Shipped", "Delivered"];
   const timelineStatuses = order.fulfillment_type === "pickup" ? pickupStatuses : deliveryStatuses;
   const timelineLabels = order.fulfillment_type === "pickup"
-    ? ["order.ordered", "order.assigned", "order.preparing", "order.ready_pickup", "order.picked_up"]
+    ? ["order.ordered", "order.accepted", "order.assigned", "order.preparing", "order.ready_pickup", "order.completed"]
     : ["order.ordered", "order.processing", "order.shipped", "order.delivered"];
-  const statusIndex = timelineStatuses.indexOf(order.status);
-  const isCancellable = ["Pending", "Processing"].includes(order.status);
-  const isReturnable = order.status === "Delivered";
-  const canReviewBranch = order.fulfillment_type === "pickup" && order.status === "Picked Up" && !reviewed;
+  const statusIndex = timelineStatuses.indexOf(normalizedStatus);
+  const progressWidth = timelineLabels.length > 1 && statusIndex >= 0
+    ? `${(statusIndex / (timelineLabels.length - 1)) * 100}%`
+    : "0%";
+  const isCancellable = ["Pending", "Accepted", "Assigned", "Processing"].includes(normalizedStatus);
+  const isReturnable = normalizedStatus === "Delivered";
+  const canReviewBranch = order.fulfillment_type === "pickup" && normalizedStatus === "Completed" && !reviewed;
 
   useEffect(() => {
     let cancelled = false;
@@ -129,8 +134,8 @@ const OrderCard = ({ order, onCancel }: OrderCardProps) => {
           <div>
             <div className="flex items-center gap-2 mb-0.5">
               <span className="text-sm font-bold text-white">{t("order.order")} #{order.id}</span>
-              <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${getStatusColor(order.status)}`}>
-                {order.status}
+              <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${getStatusColor(normalizedStatus)}`}>
+                {normalizedStatus}
               </span>
             </div>
             <p className="text-xs text-gray-500">{new Date(order.created_at).toLocaleDateString()} • {items.length} {t("order.items")}</p>
@@ -161,15 +166,15 @@ const OrderCard = ({ order, onCancel }: OrderCardProps) => {
               </div>
 
               {/* Tracking Timeline */}
-              {order.status !== "Cancelled" && order.status !== "Returned" && (
+              {normalizedStatus !== "Cancelled" && normalizedStatus !== "Returned" && (
                 <div className="relative pt-6 pb-2 px-2">
                   <div className="absolute top-[38px] left-8 right-8 h-0.5 bg-white/5">
-                    <div className="h-full bg-primary transition-all duration-1000" style={{ width: `${Math.max(0, statusIndex) * 33.33}%` }} />
+                    <div className="h-full bg-primary transition-all duration-1000" style={{ width: progressWidth }} />
                   </div>
                   <div className="flex justify-between relative">
                     {timelineLabels.map((label, idx) => {
                       const isActive = statusIndex >= idx;
-                      const Icon = [CheckCircle2, ShoppingBag, Globe, MapPin, CheckCircle2][idx];
+                      const Icon = [CheckCircle2, ShoppingBag, User, Globe, MapPin, CheckCircle2][idx];
                       return (
                         <div key={label} className="flex flex-col items-center gap-2 group">
                           <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 transition-all duration-500 z-10 ${

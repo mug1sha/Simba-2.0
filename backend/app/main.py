@@ -1,7 +1,6 @@
 import os
 from typing import List, Optional
 from fastapi import FastAPI, Depends, Header, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from . import crud, models, schemas, auth
@@ -42,6 +41,8 @@ def startup_event():
         try:
             from .seed import seed_data
             seed_data(db)
+            crud.delete_demo_branch_operations_users(db)
+            crud.seed_initial_manager_invites(db)
             crud.seed_branch_stock(db)
         finally:
             db.close()
@@ -68,6 +69,8 @@ def read_store(db: Session = Depends(get_db)):
 # --- AUTHENTICATION ---
 @app.post("/api/auth/register", response_model=schemas.AuthActionResponse, tags=["Auth"])
 def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    user.role = auth.ROLE_CUSTOMER
+    user.branch = None
     existing_user = crud.get_user_by_email(db, email=user.email)
     if existing_user and existing_user.is_verified:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -87,16 +90,42 @@ def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
         delivery=delivery,
     )
 
-@app.post("/api/auth/login", response_model=schemas.Token, tags=["Auth"])
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = crud.get_user_by_email(db, email=form_data.username)
-    if not user or not auth.verify_password(form_data.password, user.hashed_password):
+@app.post("/api/auth/login", response_model=schemas.LoginResponse, tags=["Auth"])
+def login(req: schemas.LoginRequest, db: Session = Depends(get_db)):
+    user = crud.get_user_by_email(db, email=req.email)
+    if not user or not auth.verify_password(req.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Incorrect email or password")
-    
+
     if not user.is_verified:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Please verify your email address before logging in")
-        
-    return {"access_token": auth.create_access_token(data={"sub": user.email}), "token_type": "bearer"}
+
+    requested_role = req.role or auth.ROLE_CUSTOMER
+    if requested_role != user.role:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account is not permitted for the selected role")
+
+    return {
+        "access_token": auth.create_access_token(data={"sub": user.email}),
+        "token_type": "bearer",
+        "user": user,
+    }
+
+@app.get("/api/auth/invites/{token}", response_model=schemas.RoleInvitePreview, tags=["Auth"])
+def read_role_invite(token: str, db: Session = Depends(get_db)):
+    invite = crud.get_active_role_invite(db, token)
+    if not invite:
+        raise HTTPException(status_code=404, detail="Invite link not found or expired")
+    return invite
+
+@app.post("/api/auth/invites/{token}/accept", response_model=schemas.LoginResponse, tags=["Auth"])
+def accept_role_invite(token: str, req: schemas.RoleInviteAcceptRequest, db: Session = Depends(get_db)):
+    user, error = crud.accept_role_invite(db, token=token, req=req)
+    if not user:
+        raise HTTPException(status_code=400, detail=error or "Invite could not be accepted")
+    return {
+        "access_token": auth.create_access_token(data={"sub": user.email}),
+        "token_type": "bearer",
+        "user": user,
+    }
 
 @app.get("/api/auth/verify-email", tags=["Auth"])
 @app.post("/api/auth/verify-email", tags=["Auth"])
@@ -140,6 +169,28 @@ def dev_mailbox():
         raise HTTPException(status_code=404, detail="Not found")
     return {"mailbox": read_dev_mailbox()}
 
+@app.get("/api/dev/manager-invites", response_model=List[schemas.RoleInviteLink], tags=["Development"])
+def list_dev_manager_invites(db: Session = Depends(get_db)):
+    if is_production():
+        raise HTTPException(status_code=404, detail="Not found")
+    invites = crud.list_active_role_invites(db, role=auth.ROLE_BRANCH_MANAGER)
+    return [crud.serialize_role_invite(invite) for invite in invites]
+
+@app.post("/api/dev/manager-invites", response_model=schemas.RoleInviteLink, tags=["Development"])
+def create_dev_manager_invite(req: schemas.DevManagerInviteCreateRequest, db: Session = Depends(get_db)):
+    if is_production():
+        raise HTTPException(status_code=404, detail="Not found")
+    if req.branch not in crud.SIMBA_BRANCHES:
+        raise HTTPException(status_code=400, detail="Unknown branch")
+    invite = crud.create_role_invite(
+        db,
+        role=auth.ROLE_BRANCH_MANAGER,
+        branch=req.branch,
+        email=req.email,
+        expires_hours=24 * 14,
+    )
+    return crud.serialize_role_invite(invite)
+
 # --- USER PROFILE & SETTINGS ---
 @app.get("/api/user/profile", response_model=schemas.User, tags=["Profile"])
 def read_profile(user: models.User = Depends(auth.get_current_user)):
@@ -169,11 +220,11 @@ def change_password(
     return {"status": "password_changed"}
 
 @app.get("/api/user/notifications", response_model=List[schemas.Notification], tags=["Alerts"])
-def read_notifications(db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+def read_notifications(db: Session = Depends(get_db), user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER))):
     return crud.get_notifications(db, user_id=user.id)
 
 @app.patch("/api/user/notifications/{notification_id}/read", tags=["Alerts"])
-def mark_read(notification_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+def mark_read(notification_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER))):
     notification = crud.mark_notification_as_read(db, user_id=user.id, notification_id=notification_id)
     if not notification:
         raise HTTPException(status_code=404, detail="Notification not found")
@@ -181,47 +232,47 @@ def mark_read(notification_id: int, db: Session = Depends(get_db), user: models.
 
 # --- WISHLIST & RECS ---
 @app.get("/api/user/favorites", response_model=List[schemas.Favorite], tags=["Shopping"])
-def read_favorites(db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+def read_favorites(db: Session = Depends(get_db), user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER))):
     return db.query(models.Favorite).filter(models.Favorite.user_id == user.id).all()
 
 @app.post("/api/user/favorites", response_model=schemas.Favorite, tags=["Shopping"])
-def add_favorite(product_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+def add_favorite(product_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER))):
     favorite = crud.add_favorite(db, user_id=user.id, product_id=product_id)
     if not favorite:
         raise HTTPException(status_code=404, detail="Product not found")
     return favorite
 
 @app.delete("/api/user/favorites/{product_id}", tags=["Shopping"])
-def delete_favorite(product_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+def delete_favorite(product_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER))):
     if not crud.remove_favorite(db, user_id=user.id, product_id=product_id):
         raise HTTPException(status_code=404, detail="Favorite not found")
     return {"status": "deleted"}
 
 @app.get("/api/user/favorites/price-drops", response_model=List[schemas.Favorite], tags=["Shopping"])
-def read_price_drops(db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+def read_price_drops(db: Session = Depends(get_db), user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER))):
     return crud.get_price_drops(db, user_id=user.id)
 
 @app.get("/api/user/recommendations", response_model=List[schemas.Product], tags=["Shopping"])
-def read_recommendations(db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+def read_recommendations(db: Session = Depends(get_db), user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER))):
     return crud.get_recommendations(db, user_id=user.id)
 
 @app.post("/api/user/products/{product_id}/notify", tags=["Shopping"])
-def subscribe_restock(product_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+def subscribe_restock(product_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER))):
     return crud.subscribe_restock(db, user_id=user.id, product_id=product_id)
 
 # --- ORDERS & CHECKOUT ---
 @app.post("/api/user/orders", response_model=schemas.Order, tags=["Orders"])
-def create_order(order: schemas.OrderCreate, db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+def create_order(order: schemas.OrderCreate, db: Session = Depends(get_db), user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER))):
     return crud.create_order(db, user_id=user.id, order=order)
 
 @app.post("/api/user/orders/{order_id}/cancel", tags=["Orders"])
-def cancel_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+def cancel_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER))):
     cancel = crud.cancel_order(db, user_id=user.id, order_id=order_id)
     if not cancel: raise HTTPException(status_code=400, detail="Cancellation failed")
     return cancel
 
 @app.post("/api/user/orders/{order_id}/return", response_model=schemas.Order, tags=["Orders"])
-def return_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+def return_order(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER))):
     order = crud.request_order_return(db, user_id=user.id, order_id=order_id)
     if not order:
         raise HTTPException(status_code=400, detail="Return request failed")
@@ -232,7 +283,7 @@ def submit_branch_review(
     order_id: int,
     review: schemas.BranchReviewCreate,
     db: Session = Depends(get_db),
-    user: models.User = Depends(auth.get_current_user),
+    user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER)),
 ):
     db_review = crud.create_or_update_branch_review(db, user_id=user.id, order_id=order_id, review=review)
     if not db_review:
@@ -240,7 +291,7 @@ def submit_branch_review(
     return db_review
 
 @app.get("/api/user/orders/{order_id}/branch-review", response_model=Optional[schemas.BranchReview], tags=["Reviews"])
-def read_branch_review(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+def read_branch_review(order_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER))):
     return crud.get_branch_review_for_order(db, user_id=user.id, order_id=order_id)
 
 @app.get("/api/branches/ratings", response_model=List[schemas.BranchRating], tags=["Reviews"])
@@ -248,62 +299,115 @@ def branch_ratings(db: Session = Depends(get_db)):
     return crud.get_branch_ratings(db)
 
 # --- BRANCH OPERATIONS DEMO ---
-BRANCH_STAFF = ["Aline", "Eric", "Grace", "Jean", "Patrick"]
+@app.get("/api/branch/staff", response_model=List[schemas.BranchStaffMember], tags=["Branch Operations"])
+def branch_staff(user: models.User = Depends(auth.require_roles(auth.ROLE_BRANCH_MANAGER, auth.ROLE_BRANCH_STAFF)), db: Session = Depends(get_db)):
+    return crud.list_branch_staff(db, branch=user.branch)
 
-@app.get("/api/branch/staff", response_model=List[str], tags=["Branch Operations"])
-def branch_staff():
-    return BRANCH_STAFF
+@app.post("/api/branch/staff/invites", response_model=schemas.RoleInviteLink, tags=["Branch Operations"])
+def branch_staff_invite(
+    req: schemas.RoleInviteCreateRequest,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(auth.require_roles(auth.ROLE_BRANCH_MANAGER)),
+):
+    invite = crud.create_role_invite(
+        db,
+        role=auth.ROLE_BRANCH_STAFF,
+        branch=user.branch,
+        email=req.email,
+        created_by_user_id=user.id,
+    )
+    return crud.serialize_role_invite(invite)
 
 @app.get("/api/branch/orders", response_model=List[schemas.Order], tags=["Branch Operations"])
 def branch_orders(
-    branch: Optional[str] = None,
-    staff_member: Optional[str] = None,
+    status: Optional[str] = None,
     db: Session = Depends(get_db),
+    user: models.User = Depends(auth.require_roles(auth.ROLE_BRANCH_MANAGER, auth.ROLE_BRANCH_STAFF)),
 ):
-    return crud.get_branch_orders(db, branch=branch, staff_member=staff_member)
+    return crud.get_branch_orders(db, user=user, status=status)
+
+@app.post("/api/branch/orders/{order_id}/accept", response_model=schemas.Order, tags=["Branch Operations"])
+def branch_accept_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(auth.require_roles(auth.ROLE_BRANCH_MANAGER)),
+):
+    order = crud.accept_branch_order(db, order_id=order_id, manager_user=user)
+    if not order:
+        raise HTTPException(status_code=400, detail="Order cannot be accepted")
+    return order
 
 @app.post("/api/branch/orders/{order_id}/assign", response_model=schemas.Order, tags=["Branch Operations"])
-def branch_assign_order(order_id: int, req: schemas.BranchAssignRequest, db: Session = Depends(get_db)):
-    order = crud.assign_branch_order(db, order_id=order_id, staff_member=req.staff_member)
+def branch_assign_order(
+    order_id: int,
+    req: schemas.BranchAssignRequest,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(auth.require_roles(auth.ROLE_BRANCH_MANAGER)),
+):
+    order = crud.assign_branch_order(db, order_id=order_id, staff_user_id=req.staff_user_id, manager_user=user)
     if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
+        raise HTTPException(status_code=400, detail="Order cannot be assigned")
     return order
 
 @app.post("/api/branch/orders/{order_id}/start", response_model=schemas.Order, tags=["Branch Operations"])
-def branch_start_order(order_id: int, db: Session = Depends(get_db)):
-    order = crud.update_branch_order_status(db, order_id=order_id, status_text="Preparing")
+def branch_start_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(auth.require_roles(auth.ROLE_BRANCH_STAFF)),
+):
+    order = crud.mark_branch_order_preparing(db, order_id=order_id, staff_user=user)
     if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
+        raise HTTPException(status_code=400, detail="Order cannot be moved to preparing")
     return order
 
 @app.post("/api/branch/orders/{order_id}/ready", response_model=schemas.Order, tags=["Branch Operations"])
-def branch_ready_order(order_id: int, db: Session = Depends(get_db)):
-    order = crud.update_branch_order_status(db, order_id=order_id, status_text="Ready for Pick-up")
+def branch_ready_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(auth.require_roles(auth.ROLE_BRANCH_STAFF)),
+):
+    order = crud.mark_branch_order_ready(db, order_id=order_id, staff_user=user)
     if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
+        raise HTTPException(status_code=400, detail="Order cannot be marked ready")
     return order
 
-@app.post("/api/branch/orders/{order_id}/picked-up", response_model=schemas.Order, tags=["Branch Operations"])
-def branch_picked_up_order(order_id: int, db: Session = Depends(get_db)):
-    order = crud.update_branch_order_status(db, order_id=order_id, status_text="Picked Up")
+@app.post("/api/branch/orders/{order_id}/complete", response_model=schemas.Order, tags=["Branch Operations"])
+def branch_complete_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(auth.require_roles(auth.ROLE_BRANCH_MANAGER)),
+):
+    order = crud.complete_branch_order(db, order_id=order_id, manager_user=user)
     if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
+        raise HTTPException(status_code=400, detail="Order cannot be completed")
     return order
 
 @app.post("/api/branch/orders/{order_id}/no-show", tags=["Branch Operations"])
-def branch_no_show_order(order_id: int, db: Session = Depends(get_db)):
-    flag = crud.flag_customer_no_show(db, order_id=order_id)
+def branch_no_show_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(auth.require_roles(auth.ROLE_BRANCH_MANAGER)),
+):
+    flag = crud.flag_customer_no_show(db, order_id=order_id, branch=user.branch)
     if not flag:
         raise HTTPException(status_code=404, detail="Order not found")
     return {"status": "flagged", "reason": flag.reason}
 
 @app.get("/api/branch/stock", response_model=List[schemas.BranchStock], tags=["Branch Operations"])
-def branch_stock(branch: str, search: Optional[str] = None, db: Session = Depends(get_db)):
-    return crud.get_branch_stock(db, branch=branch, search=search)
+def branch_stock(
+    search: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(auth.require_roles(auth.ROLE_BRANCH_MANAGER)),
+):
+    return crud.get_branch_stock(db, branch=user.branch, search=search)
 
 @app.post("/api/branch/stock/{product_id}/out-of-stock", response_model=schemas.BranchStock, tags=["Branch Operations"])
-def branch_mark_out_of_stock(product_id: int, branch: str, db: Session = Depends(get_db)):
-    stock = crud.set_branch_stock(db, branch=branch, product_id=product_id, stock_count=0)
+def branch_mark_out_of_stock(
+    product_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(auth.require_roles(auth.ROLE_BRANCH_MANAGER)),
+):
+    stock = crud.set_branch_stock(db, branch=user.branch, product_id=product_id, stock_count=0)
     if not stock:
         raise HTTPException(status_code=404, detail="Product not found")
     return stock
@@ -325,11 +429,11 @@ def read_categories(db: Session = Depends(get_db)):
 
 # --- HELP & SUPPORT ---
 @app.post("/api/user/support", response_model=schemas.SupportTicket, tags=["Support"])
-def submit_ticket(ticket: schemas.SupportTicketCreate, db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+def submit_ticket(ticket: schemas.SupportTicketCreate, db: Session = Depends(get_db), user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER))):
     return crud.create_support_ticket(db, user_id=user.id, ticket=ticket)
 
 @app.get("/api/user/support", response_model=List[schemas.SupportTicket], tags=["Support"])
-def list_tickets(db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+def list_tickets(db: Session = Depends(get_db), user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER))):
     return crud.get_support_tickets(db, user_id=user.id)
 
 @app.post("/api/support/ai-chat", response_model=schemas.AIChatResponse, tags=["Support"])
@@ -365,21 +469,21 @@ def ai_chat(
 
 # --- ADDRESS & PAYMENT ---
 @app.post("/api/user/addresses", response_model=schemas.Address, tags=["Profile"])
-def add_address(address: schemas.AddressCreate, db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+def add_address(address: schemas.AddressCreate, db: Session = Depends(get_db), user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER))):
     return crud.add_address(db, user_id=user.id, address=address)
 
 @app.delete("/api/user/addresses/{address_id}", tags=["Profile"])
-def delete_address(address_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+def delete_address(address_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER))):
     if not crud.delete_address(db, user_id=user.id, address_id=address_id):
         raise HTTPException(status_code=404, detail="Address not found")
     return {"status": "deleted"}
 
 @app.post("/api/user/payments", response_model=schemas.PaymentMethod, tags=["Profile"])
-def add_payment(payment: schemas.PaymentMethodCreate, db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+def add_payment(payment: schemas.PaymentMethodCreate, db: Session = Depends(get_db), user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER))):
     return crud.add_payment_method(db, user_id=user.id, payment=payment)
 
 @app.delete("/api/user/payments/{payment_id}", tags=["Profile"])
-def delete_payment(payment_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+def delete_payment(payment_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER))):
     if not crud.delete_payment_method(db, user_id=user.id, payment_id=payment_id):
         raise HTTPException(status_code=404, detail="Payment method not found")
     return {"status": "deleted"}

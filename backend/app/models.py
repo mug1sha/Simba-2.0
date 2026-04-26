@@ -70,6 +70,8 @@ class User(Base):
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
     phone = Column(String, nullable=True)
+    role = Column(String, default="customer", index=True)
+    branch = Column(String, nullable=True, index=True)
     is_verified = Column(Boolean, default=False)
     verification_token = Column(String, nullable=True)
     verification_token_expires = Column(String, nullable=True)
@@ -77,9 +79,26 @@ class User(Base):
     reset_password_expires = Column(String, nullable=True)
 
     favorites = relationship("Favorite", back_populates="user")
-    orders = relationship("Order", back_populates="user")
+    orders = relationship("Order", back_populates="user", foreign_keys="Order.user_id")
     addresses = relationship("Address", back_populates="user")
     payment_methods = relationship("PaymentMethod", back_populates="user")
+
+class RoleInvite(Base):
+    __tablename__ = "role_invites"
+
+    id = Column(Integer, primary_key=True, index=True)
+    token = Column(String, unique=True, index=True)
+    email = Column(String, nullable=True, index=True)
+    role = Column(String, index=True)
+    branch = Column(String, nullable=True, index=True)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    used_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(String)
+    expires_at = Column(String)
+    used_at = Column(String, nullable=True)
+
+    created_by_user = relationship("User", foreign_keys=[created_by_user_id])
+    used_by_user = relationship("User", foreign_keys=[used_by_user_id])
 
 class Address(Base):
     __tablename__ = "addresses"
@@ -138,12 +157,25 @@ class Order(Base):
     deposit_amount = Column(Float, default=0)
     deposit_method = Column(String, nullable=True)
     assigned_staff = Column(String, nullable=True)
+    assigned_staff_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(String)
     updated_at = Column(String, nullable=True)
 
-    user = relationship("User", back_populates="orders")
+    user = relationship("User", back_populates="orders", foreign_keys=[user_id])
     address = relationship("Address")
     payment_method = relationship("PaymentMethod")
+    assigned_staff_user = relationship("User", foreign_keys=[assigned_staff_user_id])
+
+    @property
+    def customer_name(self):
+        if not self.user:
+            return None
+        full_name = " ".join(part for part in [self.user.first_name, self.user.last_name] if part).strip()
+        return full_name or self.user.email
+
+    @property
+    def customer_phone(self):
+        return self.user.phone if self.user else None
 
 class Notification(Base):
     __tablename__ = "notifications"

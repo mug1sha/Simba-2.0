@@ -94,6 +94,9 @@ Subject: Password Reset Request for Simba
     """
     return deliver_email(email, "Password Reset Request for Simba", text_body, html_body, reset_link)
 
+def build_invite_link(token: str):
+    return f"{FRONTEND_URL}/invite?token={token}"
+
 def read_dev_mailbox():
     if not DEV_MAILBOX_PATH.exists():
         return ""

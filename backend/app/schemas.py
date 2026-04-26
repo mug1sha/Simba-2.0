@@ -77,6 +77,8 @@ class UserCreate(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     phone: Optional[str] = None
+    role: str = "customer"
+    branch: Optional[str] = None
 
     @field_validator("password")
     @classmethod
@@ -99,6 +101,8 @@ class User(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     phone: Optional[str] = None
+    role: str = "customer"
+    branch: Optional[str] = None
     is_verified: bool = False
     addresses: List["Address"] = []
     payment_methods: List["PaymentMethod"] = []
@@ -154,6 +158,14 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+    role: str = "customer"
+
+class LoginResponse(Token):
+    user: User
+
 class AuthActionResponse(BaseModel):
     status: str
     message: str
@@ -163,6 +175,51 @@ class AuthActionResponse(BaseModel):
 
 class ResendVerificationRequest(BaseModel):
     email: EmailStr
+
+class RoleInvitePreview(BaseModel):
+    email: Optional[EmailStr] = None
+    role: str
+    branch: Optional[str] = None
+    expires_at: str
+
+    class Config:
+        from_attributes = True
+
+class RoleInviteCreateRequest(BaseModel):
+    email: Optional[EmailStr] = None
+
+class DevManagerInviteCreateRequest(BaseModel):
+    branch: str
+    email: Optional[EmailStr] = None
+
+class RoleInviteLink(BaseModel):
+    email: Optional[EmailStr] = None
+    role: str
+    branch: Optional[str] = None
+    expires_at: str
+    invite_url: str
+
+class RoleInviteAcceptRequest(BaseModel):
+    email: EmailStr
+    password: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    phone: Optional[str] = None
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters long")
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not re.search(r"[a-z]", v):
+            raise ValueError("Password must contain at least one lowercase letter")
+        if not re.search(r"\d", v):
+            raise ValueError("Password must contain at least one digit")
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
+            raise ValueError("Password must contain at least one special character")
+        return v
 
 class Favorite(BaseModel):
     id: int
@@ -189,6 +246,9 @@ class Order(BaseModel):
     deposit_amount: Optional[float] = 0
     deposit_method: Optional[str] = None
     assigned_staff: Optional[str] = None
+    assigned_staff_user_id: Optional[int] = None
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
     created_at: str
     updated_at: Optional[str] = None
     
@@ -238,7 +298,23 @@ class OrderCreate(BaseModel):
         return v
 
 class BranchAssignRequest(BaseModel):
-    staff_member: str
+    staff_user_id: int
+
+class BranchStaffMember(BaseModel):
+    id: int
+    email: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    role: str
+    branch: Optional[str] = None
+
+    @property
+    def display_name(self) -> str:
+        full_name = " ".join(part for part in [self.first_name, self.last_name] if part).strip()
+        return full_name or self.email
+
+    class Config:
+        from_attributes = True
 
 class Notification(BaseModel):
     id: int
