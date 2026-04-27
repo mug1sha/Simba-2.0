@@ -241,6 +241,8 @@ const BranchesPage = () => {
     },
     {},
   );
+  const activeBranchRating = ratingByBranch[activeBranch.name]?.average_rating || 4.6;
+  const activeBranchReviewCount = ratingByBranch[activeBranch.name]?.review_count || 0;
   const activeRoute = useMemo(
     () =>
       activeBranchWithDistance.distanceMeters !== null
@@ -924,13 +926,6 @@ const BranchesPage = () => {
                     value: t("branches.items_count", { count: topInventory.length || 0 }),
                     caption: t("branches.currently_visible"),
                   },
-                  {
-                    label: t("branches.branch_rating"),
-                    value: `${(ratingByBranch[activeBranch.name]?.average_rating || 4.6).toFixed(1)}★`,
-                    caption: ratingByBranch[activeBranch.name]?.review_count
-                      ? t("branches.customer_reviews", { count: ratingByBranch[activeBranch.name].review_count })
-                      : t("branches.no_reviews_yet"),
-                  },
                 ].map((card) => (
                   <div key={card.label} className="rounded-2xl border border-border/50 bg-background/70 p-4">
                     <p className="text-[10px] font-black uppercase tracking-[0.25em] text-primary">{card.label}</p>
@@ -938,6 +933,30 @@ const BranchesPage = () => {
                     <p className="mt-1 text-xs text-muted-foreground">{card.caption}</p>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-center">
+              <div className="relative w-full max-w-2xl overflow-hidden rounded-[2rem] border border-primary/15 bg-gradient-to-br from-primary/[0.14] via-background to-amber-500/[0.10] px-6 py-7 text-center shadow-[0_24px_70px_rgba(0,0,0,0.08)]">
+                <div className="absolute inset-x-10 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
+                <p className="text-[10px] font-black uppercase tracking-[0.35em] text-primary">{t("branches.branch_rating")}</p>
+                <div className="mt-4 flex items-center justify-center gap-3">
+                  <span className="rounded-full border border-amber-500/30 bg-amber-500/12 px-3 py-1 text-xs font-black uppercase tracking-[0.25em] text-amber-600 dark:text-amber-300">
+                    {"★".repeat(Math.max(1, Math.round(activeBranchRating)))}
+                  </span>
+                  <p className="text-4xl font-black tracking-tight text-foreground md:text-5xl">
+                    {activeBranchRating.toFixed(1)}
+                    <span className="ml-1 text-amber-500">★</span>
+                  </p>
+                </div>
+                <p className="mt-3 text-sm font-bold text-foreground">
+                  {activeBranchReviewCount
+                    ? t("branches.customer_reviews", { count: activeBranchReviewCount })
+                    : t("branches.no_reviews_yet")}
+                </p>
+                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                  {getReviewSummary(activeBranchReviewCount)}
+                </p>
               </div>
             </div>
 

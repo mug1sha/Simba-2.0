@@ -4,6 +4,7 @@ import { ShoppingBag, ChevronRight, CheckCircle2, Globe, MapPin, Star, User } fr
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 interface OrderCardProps {
   order: any;
@@ -14,6 +15,8 @@ const OrderCard = ({ order, onCancel }: OrderCardProps) => {
   const { token } = useAuth();
   const { t } = useLanguage();
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isReviewDialogOpen, setIsReviewDialogOpen] = useState(false);
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewComment, setReviewComment] = useState("");
   const [reviewed, setReviewed] = useState(false);
@@ -47,6 +50,7 @@ const OrderCard = ({ order, onCancel }: OrderCardProps) => {
     : "0%";
   const isCancellable = ["Pending", "Accepted", "Assigned", "Processing"].includes(normalizedStatus);
   const isReturnable = normalizedStatus === "Delivered";
+  const isPickupCompleted = order.fulfillment_type === "pickup" && normalizedStatus === "Completed";
   const canReviewBranch = order.fulfillment_type === "pickup" && normalizedStatus === "Completed" && !reviewed;
 
   useEffect(() => {
@@ -107,6 +111,7 @@ const OrderCard = ({ order, onCancel }: OrderCardProps) => {
   };
 
   const submitBranchReview = async () => {
+    setIsSubmittingReview(true);
     try {
       const res = await fetch(`/api/user/orders/${order.id}/branch-review`, {
         method: "POST",
@@ -118,9 +123,12 @@ const OrderCard = ({ order, onCancel }: OrderCardProps) => {
       });
       if (!res.ok) throw new Error();
       setReviewed(true);
+      setIsReviewDialogOpen(false);
       toast.success(t("review.thanks"));
     } catch (err) {
       toast.error(t("review.failed"));
+    } finally {
+      setIsSubmittingReview(false);
     }
   };
 
@@ -207,29 +215,43 @@ const OrderCard = ({ order, onCancel }: OrderCardProps) => {
                 </div>
               )}
 
-              {canReviewBranch && (
-                <div className="rounded-3xl bg-primary/5 border border-primary/20 p-5 space-y-4">
-                  <div>
-                    <h3 className="text-sm font-black text-white">{t("review.title")}</h3>
-                    <p className="text-xs text-gray-500 mt-1">{order.pickup_branch}</p>
-                  </div>
-                  <div className="flex gap-2">
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <button key={star} type="button" onClick={() => setReviewRating(star)} className="p-1">
-                        <Star className={`w-6 h-6 ${star <= reviewRating ? "fill-yellow-400 text-yellow-400" : "text-gray-600"}`} />
+              {isPickupCompleted && (
+                <div className="rounded-3xl border border-primary/20 bg-primary/5 p-5">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <h3 className="text-sm font-black text-white">{t("review.title")}</h3>
+                      <p className="mt-1 text-xs text-gray-500">{order.pickup_branch}</p>
+                      {reviewed && (
+                        <div className="mt-3">
+                          <div className="flex items-center gap-1">
+                            {[1, 2, 3, 4, 5].map((star) => (
+                              <Star
+                                key={star}
+                                className={`h-4 w-4 ${star <= reviewRating ? "fill-yellow-400 text-yellow-400" : "text-gray-600"}`}
+                              />
+                            ))}
+                          </div>
+                          {reviewComment.trim() && (
+                            <p className="mt-2 text-xs leading-relaxed text-gray-400">{reviewComment}</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {canReviewBranch ? (
+                      <button
+                        type="button"
+                        onClick={() => setIsReviewDialogOpen(true)}
+                        className="inline-flex items-center justify-center rounded-2xl border border-primary/30 bg-primary px-5 py-3 text-xs font-black text-white transition-all hover:brightness-110"
+                      >
+                        {t("review.rate_now")}
                       </button>
-                    ))}
+                    ) : (
+                      <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-center text-[11px] font-black uppercase tracking-[0.22em] text-primary">
+                        {t("review.thanks")}
+                      </div>
+                    )}
                   </div>
-                  <textarea
-                    value={reviewComment}
-                    onChange={(e) => setReviewComment(e.target.value)}
-                    placeholder={t("review.comment")}
-                    rows={3}
-                    className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-xs text-white outline-none placeholder:text-gray-600 focus:border-primary/50"
-                  />
-                  <button onClick={submitBranchReview} className="rounded-xl bg-primary px-5 py-3 text-xs font-black text-white hover:brightness-110 transition-all">
-                    {t("review.submit")}
-                  </button>
                 </div>
               )}
 
@@ -260,6 +282,61 @@ const OrderCard = ({ order, onCancel }: OrderCardProps) => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <Dialog open={isReviewDialogOpen} onOpenChange={setIsReviewDialogOpen}>
+        <DialogContent className="max-w-xl border border-white/10 bg-[#08081a] p-0 text-white shadow-2xl shadow-black/40">
+          <DialogHeader className="border-b border-white/10 px-6 pb-4 pt-6 text-left">
+            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-primary">{t("review.branch_rating")}</p>
+            <DialogTitle className="mt-3 text-2xl font-black tracking-tight text-white">
+              {t("review.after_purchase_title")}
+            </DialogTitle>
+            <DialogDescription className="mt-2 text-sm leading-relaxed text-gray-400">
+              {order.pickup_branch}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-5 px-6 pb-6 pt-2">
+            <div className="flex items-center justify-center gap-2">
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button
+                  key={star}
+                  type="button"
+                  onClick={() => setReviewRating(star)}
+                  className="rounded-2xl border border-white/10 bg-white/[0.04] p-3 transition-all hover:border-primary/40 hover:bg-primary/10"
+                >
+                  <Star className={`h-7 w-7 ${star <= reviewRating ? "fill-yellow-400 text-yellow-400" : "text-gray-600"}`} />
+                </button>
+              ))}
+            </div>
+
+            <textarea
+              value={reviewComment}
+              onChange={(e) => setReviewComment(e.target.value)}
+              placeholder={t("review.comment")}
+              rows={4}
+              className="w-full rounded-3xl border border-white/10 bg-white/[0.04] px-4 py-4 text-sm text-white outline-none placeholder:text-gray-600 focus:border-primary/50"
+            />
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setIsReviewDialogOpen(false)}
+                className="rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-3 text-xs font-black text-gray-300 transition-all hover:bg-white/[0.08] hover:text-white"
+              >
+                {t("review.maybe_later")}
+              </button>
+              <button
+                type="button"
+                onClick={submitBranchReview}
+                disabled={isSubmittingReview}
+                className="rounded-2xl bg-primary px-5 py-3 text-xs font-black text-white transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isSubmittingReview ? t("cart.processing") : t("review.submit")}
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

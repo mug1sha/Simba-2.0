@@ -7,6 +7,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { getRoleDashboardPath } from "@/lib/auth";
 import { readErrorMessage } from "@/lib/api";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { BRANCH_NAMES } from "@/lib/branches";
 
 type InvitePreview = {
   email?: string | null;
@@ -36,6 +37,7 @@ export const AuthFlowPage = () => {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
+  const [branch, setBranch] = useState("");
   const [newPwd, setNewPwd] = useState("");
   const [confirmPwd, setConfirmPwd] = useState("");
   const [showPwd, setShowPwd] = useState(false);
@@ -74,7 +76,12 @@ export const AuthFlowPage = () => {
     }
   }, []);
 
-  const roleLabel = invitePreview?.role === "branch_manager" ? t("auth.role.manager") : t("auth.role.staff");
+  const roleLabel = invitePreview?.role === "branch_manager" ? t("auth.role.admin") : t("auth.role.staff");
+
+  useEffect(() => {
+    if (!invitePreview) return;
+    setBranch(invitePreview.branch || BRANCH_NAMES[0] || "");
+  }, [invitePreview]);
 
   const handleVerify = async () => {
     try {
@@ -148,6 +155,7 @@ export const AuthFlowPage = () => {
           first_name: firstName,
           last_name: lastName,
           phone,
+          branch,
         }),
       });
       if (!res.ok) throw new Error(await readErrorMessage(res, "Invite acceptance failed"));
@@ -235,7 +243,11 @@ export const AuthFlowPage = () => {
                   {invitePreview && (
                     <div className="rounded-2xl border border-primary/20 bg-primary/10 px-4 py-3 text-sm text-primary">
                       <p className="font-bold">{roleLabel}</p>
-                      <p className="mt-1 text-xs text-primary/80">{t("auth.invite.branch", { branch: invitePreview.branch || "" })}</p>
+                      <p className="mt-1 text-xs text-primary/80">
+                        {invitePreview.branch
+                          ? t("auth.invite.branch_change_allowed", { branch: invitePreview.branch })
+                          : t("auth.invite.choose_branch")}
+                      </p>
                       <p className="mt-1 text-xs text-primary/80">
                         {t("auth.invite.expires", { date: new Date(invitePreview.expires_at).toLocaleString() })}
                       </p>
@@ -279,6 +291,24 @@ export const AuthFlowPage = () => {
                     required
                     className="h-14 w-full rounded-2xl border border-white/10 bg-white/[0.06] px-4 text-white outline-none focus:border-primary/60"
                   />
+
+                  <select
+                    value={branch}
+                    onChange={(event) => setBranch(event.target.value)}
+                    required
+                    className="h-14 w-full rounded-2xl border border-white/10 bg-white/[0.06] px-4 text-white outline-none focus:border-primary/60"
+                  >
+                    {!branch && (
+                      <option value="" disabled className="bg-[#0c0c1e] text-gray-400">
+                        {t("auth.invite.choose_branch")}
+                      </option>
+                    )}
+                    {BRANCH_NAMES.map((branchName) => (
+                      <option key={branchName} value={branchName} className="bg-[#0c0c1e] text-white">
+                        {branchName}
+                      </option>
+                    ))}
+                  </select>
 
                   <div className="space-y-4">
                     <div className="space-y-1">

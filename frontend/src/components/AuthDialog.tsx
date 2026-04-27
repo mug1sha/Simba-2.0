@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence, Variants } from "framer-motion";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/AuthContext";
@@ -15,6 +15,14 @@ interface AuthDialogProps {
 }
 
 type AuthState = "LOGIN" | "SIGNUP" | "FORGOT_PASSWORD" | "SUCCESS_MSG";
+
+type RoleInviteLink = {
+  email?: string | null;
+  role: "branch_manager" | "branch_staff";
+  branch?: string | null;
+  expires_at: string;
+  invite_url: string;
+};
 
 const fadeUp: Variants = {
   hidden: { opacity: 0, y: 20 },
@@ -84,6 +92,9 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
   const [showConfirm, setShowConfirm] = useState(false);
   const [agreed, setAgreed] = useState(false);
   const [selectedRole, setSelectedRole] = useState<UserRole>("customer");
+  const [managerInvites, setManagerInvites] = useState<RoleInviteLink[]>([]);
+  const [selectedManagerInvite, setSelectedManagerInvite] = useState("");
+  const [managerInvitesLoading, setManagerInvitesLoading] = useState(false);
 
   const strength = getPwdStrength(pwd);
 
@@ -99,8 +110,57 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
   ];
 
   const handleSwitch = (newView: AuthState, d: number) => { setDir(d); setView(newView); setNeedsVerificationEmail(false); };
-  const reset = () => { setEmail(""); setPhone(""); setPwd(""); setFirstName(""); setLastName(""); setConfirmPwd(""); setAgreed(false); setNeedsVerificationEmail(false); setSelectedRole("customer"); setView("LOGIN"); };
+  const reset = () => {
+    setEmail("");
+    setPhone("");
+    setPwd("");
+    setFirstName("");
+    setLastName("");
+    setConfirmPwd("");
+    setAgreed(false);
+    setNeedsVerificationEmail(false);
+    setSelectedRole("customer");
+    setManagerInvites([]);
+    setSelectedManagerInvite("");
+    setView("LOGIN");
+  };
   const handleClose = () => { reset(); onClose(); };
+
+  useEffect(() => {
+    if (!isOpen || selectedRole !== "branch_manager") {
+      setManagerInvitesLoading(false);
+      return;
+    }
+
+    let active = true;
+
+    const loadManagerInvites = async () => {
+      setManagerInvitesLoading(true);
+      try {
+        const res = await fetch("/api/dev/manager-invites");
+        if (!res.ok) {
+          throw new Error("Manager invite lookup unavailable");
+        }
+        const data = await res.json() as RoleInviteLink[];
+        if (!active) return;
+        setManagerInvites(data);
+        setSelectedManagerInvite((current) => current || data[0]?.invite_url || "");
+      } catch {
+        if (!active) return;
+        setManagerInvites([]);
+        setSelectedManagerInvite("");
+      } finally {
+        if (active) {
+          setManagerInvitesLoading(false);
+        }
+      }
+    };
+
+    loadManagerInvites();
+    return () => {
+      active = false;
+    };
+  }, [isOpen, selectedRole]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault(); setLoading(true);
@@ -221,7 +281,7 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
                     <div className="grid grid-cols-3 gap-1">
                       {[
                         { id: "customer", label: t("auth.role.customer") },
-                        { id: "branch_manager", label: t("auth.role.manager") },
+                        { id: "branch_manager", label: t("auth.role.admin") },
                         { id: "branch_staff", label: t("auth.role.staff") },
                       ].map((role) => (
                         <button
@@ -243,6 +303,41 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
                     <div className="rounded-2xl border border-primary/20 bg-primary/10 px-4 py-3 text-[11px] leading-relaxed text-primary">
                       <p>{t("auth.invite.private_only")}</p>
                       <p className="mt-1">{t("auth.invite.private_only_desc")}</p>
+                    </div>
+                  )}
+                  {selectedRole === "branch_manager" && (
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-primary">{t("auth.invite.admin_access")}</p>
+                      <p className="mt-2 text-xs leading-relaxed text-gray-400">{t("auth.invite.admin_access_desc")}</p>
+                      {managerInvitesLoading ? (
+                        <p className="mt-3 text-xs text-gray-500">{t("auth.invite.loading_admin_links")}</p>
+                      ) : managerInvites.length > 0 ? (
+                        <div className="mt-3 space-y-3">
+                          <select
+                            value={selectedManagerInvite}
+                            onChange={(event) => setSelectedManagerInvite(event.target.value)}
+                            className="h-11 w-full rounded-xl border border-white/10 bg-white/[0.06] px-4 text-sm text-white outline-none focus:border-primary/60"
+                          >
+                            {managerInvites.map((invite) => (
+                              <option key={invite.invite_url} value={invite.invite_url} className="bg-[#080818] text-white">
+                                {invite.branch || t("auth.role.admin")}
+                              </option>
+                            ))}
+                          </select>
+                          <motion.button
+                            type="button"
+                            onClick={() => selectedManagerInvite && window.location.assign(selectedManagerInvite)}
+                            whileHover={{ y: -2 }}
+                            whileTap={{ scale: 0.98 }}
+                            disabled={!selectedManagerInvite}
+                            className="w-full h-11 rounded-xl border border-primary/20 bg-primary/10 text-primary text-xs font-bold hover:bg-primary/20 transition-all disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {t("auth.invite.open_admin_signup")}
+                          </motion.button>
+                        </div>
+                      ) : (
+                        <p className="mt-3 text-xs text-gray-500">{t("auth.invite.no_admin_links")}</p>
+                      )}
                     </div>
                   )}
                   <div className="text-right"><button type="button" onClick={() => handleSwitch("FORGOT_PASSWORD", 1)} className="text-primary text-xs hover:underline">{t("auth.login.forgot_password")}</button></div>

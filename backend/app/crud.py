@@ -373,7 +373,7 @@ def serialize_role_invite(invite: models.RoleInvite):
 def create_role_invite(
     db: Session,
     role: str,
-    branch: str,
+    branch: str | None = None,
     email: str | None = None,
     created_by_user_id: int | None = None,
     expires_hours: int = 72,
@@ -416,6 +416,13 @@ def accept_role_invite(db: Session, token: str, req: schemas.RoleInviteAcceptReq
     if existing_user:
         return None, "An account with this email already exists"
 
+    selected_branch = req.branch.strip() if req.branch else invite.branch
+    if invite.role in {"branch_manager", "branch_staff"}:
+        if not selected_branch:
+            return None, "Please choose a branch"
+        if selected_branch not in SIMBA_BRANCHES:
+            return None, "Unknown branch"
+
     user = models.User(
         email=email,
         hashed_password=get_password_hash(req.password),
@@ -423,7 +430,7 @@ def accept_role_invite(db: Session, token: str, req: schemas.RoleInviteAcceptReq
         last_name=req.last_name,
         phone=req.phone,
         role=invite.role,
-        branch=invite.branch,
+        branch=selected_branch,
         is_verified=True,
         verification_token=None,
         verification_token_expires=None,
