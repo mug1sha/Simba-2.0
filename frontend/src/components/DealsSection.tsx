@@ -30,7 +30,7 @@ const DealsSection = () => {
                 {t("deals.hot")}
               </span>
             </div>
-            <h2 className="font-heading text-3xl font-bold text-foreground md:text-4xl">{t("deals.title")}</h2>
+            <h2 className="font-heading text-3xl font-bold text-foreground md:text-4xl">Fresh Deals Today</h2>
           </div>
           <a href="#products" className="text-sm font-bold text-primary transition-opacity hover:opacity-80">
             {t("deals.view_all")}

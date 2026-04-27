@@ -16,9 +16,8 @@ const TrustSection = () => {
     <section className="section-padding">
     <div className="container mx-auto px-4">
       <div className="mb-12 text-center">
-        <h2 className="mb-4 text-3xl font-black tracking-tighter text-foreground md:text-5xl">
-          {t("trust.title")}
-        </h2>
+        <p className="mb-3 text-[11px] font-black uppercase tracking-[0.32em] text-primary">Confidence first</p>
+        <h2 className="mb-4 text-3xl font-black tracking-tighter text-foreground md:text-5xl">TRUSTED BY FAMILIES IN KIGALI</h2>
         <p className="mx-auto max-w-2xl text-sm text-muted-foreground md:text-base">
           {t("trust.subtitle")}
         </p>

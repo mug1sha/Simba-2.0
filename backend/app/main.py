@@ -109,6 +109,27 @@ def login(req: schemas.LoginRequest, db: Session = Depends(get_db)):
         "user": user,
     }
 
+@app.post("/api/auth/google", response_model=schemas.LoginResponse, tags=["Auth"])
+def google_authenticate(req: schemas.GoogleAuthRequest, db: Session = Depends(get_db)):
+    if req.role != auth.ROLE_CUSTOMER:
+        raise HTTPException(status_code=400, detail="Google authentication is only available for customer accounts")
+
+    google_user = auth.verify_google_token(req.credential)
+    user, error = crud.create_or_login_google_user(
+        db,
+        email=google_user["email"],
+        first_name=google_user.get("given_name"),
+        last_name=google_user.get("family_name"),
+    )
+    if not user:
+        raise HTTPException(status_code=400, detail=error or "Google authentication failed")
+
+    return {
+        "access_token": auth.create_access_token(data={"sub": user.email}),
+        "token_type": "bearer",
+        "user": user,
+    }
+
 @app.get("/api/auth/invites/{token}", response_model=schemas.RoleInvitePreview, tags=["Auth"])
 def read_role_invite(token: str, db: Session = Depends(get_db)):
     invite = crud.get_active_role_invite(db, token)
@@ -176,6 +197,13 @@ def list_dev_manager_invites(db: Session = Depends(get_db)):
     invites = crud.list_active_role_invites(db, role=auth.ROLE_BRANCH_MANAGER)
     return [crud.serialize_role_invite(invite) for invite in invites]
 
+@app.get("/api/dev/staff-invites", response_model=List[schemas.RoleInviteLink], tags=["Development"])
+def list_dev_staff_invites(db: Session = Depends(get_db)):
+    if is_production():
+        raise HTTPException(status_code=404, detail="Not found")
+    invites = crud.list_active_role_invites(db, role=auth.ROLE_BRANCH_STAFF)
+    return [crud.serialize_role_invite(invite) for invite in invites]
+
 @app.post("/api/dev/manager-invites", response_model=schemas.RoleInviteLink, tags=["Development"])
 def create_dev_manager_invite(req: schemas.DevManagerInviteCreateRequest, db: Session = Depends(get_db)):
     if is_production():
@@ -229,6 +257,11 @@ def mark_read(notification_id: int, db: Session = Depends(get_db), user: models.
     if not notification:
         raise HTTPException(status_code=404, detail="Notification not found")
     return notification
+
+@app.patch("/api/user/notifications/read-all", tags=["Alerts"])
+def mark_all_read(db: Session = Depends(get_db), user: models.User = Depends(auth.require_roles(auth.ROLE_CUSTOMER))):
+    updated = crud.mark_all_notifications_as_read(db, user_id=user.id)
+    return {"status": "ok", "updated": updated}
 
 # --- WISHLIST & RECS ---
 @app.get("/api/user/favorites", response_model=List[schemas.Favorite], tags=["Shopping"])

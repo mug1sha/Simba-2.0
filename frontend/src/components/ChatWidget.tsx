@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, X, Send, Bot, Plus } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -56,14 +56,17 @@ const getCartAddMode = (text: string): CartAddMode => {
   return wantsAll ? "all" : "first";
 };
 
-const ChatWidget = () => {
+  const ChatWidget = () => {
   const { user, token } = useAuth();
   const { language, t } = useLanguage();
   const { addItem } = useCart();
-  const createGreeting = () =>
-    t("support.greeting", {
-      name: user?.first_name || t("support.greeting_default_name"),
-    });
+  const createGreeting = useCallback(
+    () =>
+      t("support.greeting", {
+        name: user?.first_name || t("support.greeting_default_name"),
+      }),
+    [t, user?.first_name],
+  );
   const [isOpen, setIsOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -108,7 +111,7 @@ const ChatWidget = () => {
       if (prev.length !== 1 || prev[0]?.role !== "bot") return prev;
       return [{ ...prev[0], text: createGreeting() }];
     });
-  }, [language, user?.first_name]);
+  }, [createGreeting, language]);
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();

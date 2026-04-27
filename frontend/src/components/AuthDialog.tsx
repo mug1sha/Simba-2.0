@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 import { getRoleDashboardPath, type UserRole } from "@/lib/auth";
 import { readErrorMessage } from "@/lib/api";
 import { useLanguage } from "@/contexts/LanguageContext";
+import GoogleAuthButton from "@/components/GoogleAuthButton";
 
 interface AuthDialogProps {
   isOpen: boolean;
@@ -185,6 +186,17 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
     finally { setLoading(false); }
   };
 
+  const handleGoogleAuthSuccess = async (data: any) => {
+    setNeedsVerificationEmail(false);
+    const loggedInUser = await login(data);
+    toast({
+      title: t("auth.toast.welcome_back"),
+      description: "Google authentication completed successfully.",
+    });
+    handleClose();
+    navigate(getRoleDashboardPath(loggedInUser?.role || "customer"));
+  };
+
   const handleResendVerification = async () => {
     if (!email) return toast({ title: t("auth.toast.email_required"), description: t("auth.toast.enter_email_first"), variant: "destructive" });
     setLoading(true);
@@ -299,6 +311,20 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
                   </div>
                   <Field id="l-email" type="email" placeholder={t("auth.field.email")} value={email} onChange={setEmail} Icon={Mail} />
                   <Field id="l-pwd" placeholder={t("auth.field.password")} value={pwd} onChange={setPwd} Icon={Lock} toggle visible={showPwd} onToggle={() => setShowPwd(!showPwd)} />
+                  {selectedRole === "customer" && (
+                    <>
+                      <div className="flex items-center gap-3 py-1">
+                        <div className="h-px flex-1 bg-white/10" />
+                        <span className="text-[10px] font-black uppercase tracking-[0.24em] text-gray-500">or continue with Google</span>
+                        <div className="h-px flex-1 bg-white/10" />
+                      </div>
+                      <GoogleAuthButton
+                        intent="login"
+                        onSuccess={handleGoogleAuthSuccess}
+                        onError={(message) => toast({ title: t("auth.toast.login_failed"), description: message, variant: "destructive" })}
+                      />
+                    </>
+                  )}
                   {selectedRole !== "customer" && (
                     <div className="rounded-2xl border border-primary/20 bg-primary/10 px-4 py-3 text-[11px] leading-relaxed text-primary">
                       <p>{t("auth.invite.private_only")}</p>
@@ -381,6 +407,16 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
                     )}
                   </div>
                   <Field id="s-cpwd" placeholder={t("auth.field.confirm_password")} value={confirmPwd} onChange={setConfirmPwd} Icon={Lock} toggle visible={showConfirm} onToggle={() => setShowConfirm(!showConfirm)} />
+                  <div className="flex items-center gap-3 py-1">
+                    <div className="h-px flex-1 bg-white/10" />
+                    <span className="text-[10px] font-black uppercase tracking-[0.24em] text-gray-500">or continue with Google</span>
+                    <div className="h-px flex-1 bg-white/10" />
+                  </div>
+                  <GoogleAuthButton
+                    intent="signup"
+                    onSuccess={handleGoogleAuthSuccess}
+                    onError={(message) => toast({ title: t("auth.toast.signup_failed"), description: message, variant: "destructive" })}
+                  />
                   <label className="flex items-start gap-2.5 cursor-pointer group">
                     <input type="checkbox" className="hidden" checked={agreed} onChange={() => setAgreed(!agreed)} />
                     <div className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 ${agreed ? "bg-primary border-primary" : "border-white/20 bg-white/5"}`}>{agreed && <CheckCircle2 className="w-3 h-3 text-white" />}</div>

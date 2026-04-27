@@ -210,7 +210,7 @@ const Navbar = ({ searchQuery, onSearchChange }: NavbarProps) => {
                     <UserIcon className="w-4 h-4 text-muted-foreground" />
                     <span className="text-xs font-bold text-foreground">{t("nav.manage_account")}</span>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setIsProfileOpen(true)} className="flex items-center gap-3 p-3 rounded-xl focus:bg-accent cursor-pointer">
+                  <DropdownMenuItem onClick={() => navigate("/customer")} className="flex items-center gap-3 p-3 rounded-xl focus:bg-accent cursor-pointer">
                     <ShoppingBag className="w-4 h-4 text-muted-foreground" />
                     <span className="text-xs font-bold text-foreground">{t("nav.track_orders")}</span>
                   </DropdownMenuItem>

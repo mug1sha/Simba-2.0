@@ -46,6 +46,18 @@ const NotificationCenter = ({ token }: NotificationCenterProps) => {
     }
   };
 
+  const markAllRead = async () => {
+    try {
+      await fetch("/api/user/notifications/read-all", {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      refetch();
+    } catch (err) {
+      console.error("Error clearing notifications:", err);
+    }
+  };
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger className="relative p-2 text-muted-foreground hover:text-primary transition-colors outline-none group">
@@ -98,7 +110,12 @@ const NotificationCenter = ({ token }: NotificationCenterProps) => {
         </div>
         {notifications.length > 0 && (
           <div className="p-3 bg-white/[0.01] text-center border-t border-white/5">
-            <button className="text-[10px] font-bold text-gray-500 hover:text-primary transition-colors uppercase tracking-widest">
+            <button
+              type="button"
+              onClick={markAllRead}
+              disabled={unreadCount === 0}
+              className="text-[10px] font-bold text-gray-500 hover:text-primary transition-colors uppercase tracking-widest disabled:cursor-not-allowed disabled:opacity-40"
+            >
               {t("notifications.clear_all")}
             </button>
           </div>

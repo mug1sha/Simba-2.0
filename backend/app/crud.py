@@ -344,6 +344,56 @@ def update_user(db: Session, user_id: int, user_update: schemas.UserUpdate):
         db.refresh(db_user)
     return db_user
 
+def create_or_login_google_user(
+    db: Session,
+    *,
+    email: str,
+    first_name: str | None = None,
+    last_name: str | None = None,
+):
+    normalized_email = normalize_email(email)
+    user = get_user_by_email(db, normalized_email)
+
+    if user:
+        if user.role != "customer":
+            return None, "This Google account belongs to a non-customer role. Use the invite-based login flow instead."
+
+        changed = False
+        if not user.is_verified:
+            user.is_verified = True
+            user.verification_token = None
+            user.verification_token_expires = None
+            changed = True
+        if first_name and not user.first_name:
+            user.first_name = first_name
+            changed = True
+        if last_name and not user.last_name:
+            user.last_name = last_name
+            changed = True
+        if changed:
+            db.commit()
+            db.refresh(user)
+        return user, None
+
+    random_password = generate_token()
+    user = models.User(
+        email=normalized_email,
+        hashed_password=get_password_hash(random_password),
+        first_name=first_name,
+        last_name=last_name,
+        role="customer",
+        branch=None,
+        is_verified=True,
+        verification_token=None,
+        verification_token_expires=None,
+        reset_password_token=None,
+        reset_password_expires=None,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user, None
+
 def normalize_email(email: str | None) -> str | None:
     if not email:
         return None
@@ -963,6 +1013,16 @@ def mark_notification_as_read(db: Session, user_id: int, notification_id: int):
     db.commit()
     db.refresh(notification)
     return notification
+
+def mark_all_notifications_as_read(db: Session, user_id: int):
+    notifications = db.query(models.Notification).filter(
+        models.Notification.user_id == user_id,
+        models.Notification.is_read == False,  # noqa: E712
+    ).all()
+    for notification in notifications:
+        notification.is_read = True
+    db.commit()
+    return len(notifications)
 
 # --- ADDRESS & PAYMENT ---
 def add_address(db: Session, user_id: int, address: schemas.AddressCreate):

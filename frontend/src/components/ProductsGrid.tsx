@@ -1,6 +1,6 @@
 import ProductCard from "./ProductCard";
 import { type Product } from "@/lib/products";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
 
 interface ProductsGridProps {
@@ -12,6 +12,10 @@ const ITEMS_PER_PAGE = 20;
 const ProductsGrid = ({ products }: ProductsGridProps) => {
   const { t } = useLanguage();
   const [visibleCount, setVisibleCount] = useState(ITEMS_PER_PAGE);
+
+  useEffect(() => {
+    setVisibleCount(ITEMS_PER_PAGE);
+  }, [products]);
 
   const visibleProducts = products.slice(0, visibleCount);
   const hasMore = visibleCount < products.length;

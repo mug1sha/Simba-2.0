@@ -78,6 +78,7 @@ SECRET_KEY=<strong-random-secret>
 DATABASE_URL=<production-database-url>
 FRONTEND_URL=https://your-frontend-domain.example
 CORS_ORIGINS=https://your-frontend-domain.example
+GOOGLE_CLIENT_ID=<google-oauth-web-client-id>
 SMTP_HOST=<smtp-host>
 SMTP_PORT=587
 SMTP_USER=<smtp-user>
@@ -112,8 +113,19 @@ Set the API URL before building:
 
 ```bash
 cd frontend
-VITE_API_BASE_URL=https://your-backend-domain.example/api npm run build
+VITE_API_BASE_URL=https://your-backend-domain.example/api \
+VITE_GOOGLE_CLIENT_ID=<google-oauth-web-client-id> \
+npm run build
 ```
+
+### Google Authentication Setup
+1. In Google Cloud Console, create or open a project.
+2. Configure the OAuth consent screen.
+3. Create a Web application OAuth client.
+4. Add authorized JavaScript origins for your frontend, for example `http://127.0.0.1:8080` during local development.
+5. Use the generated client ID for both `GOOGLE_CLIENT_ID` in the backend and `VITE_GOOGLE_CLIENT_ID` in the frontend.
+
+Google auth is wired for customer accounts. Branch manager and branch staff access remain invite-based.
 
 Deploy `frontend/dist` to your static hosting provider.
 

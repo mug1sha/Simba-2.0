@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   User, MapPin, CreditCard, Shield, Globe, 
@@ -26,9 +26,17 @@ type ProfileTab = "PERSONAL" | "ADDRESSES" | "PAYMENTS" | "SECURITY" | "WISHLIST
 
 export const ProfileDialog: React.FC<ProfileDialogProps> = ({ isOpen, onClose }) => {
   const { t } = useLanguage();
-  const { user, refreshProfile, logout } = useAuth();
+  const { token, user, refreshProfile, logout } = useAuth();
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<ProfileTab>("PERSONAL");
+  const [isEditingPersonal, setIsEditingPersonal] = useState(false);
+  const [personalForm, setPersonalForm] = useState({
+    first_name: "",
+    last_name: "",
+    email: "",
+    phone: "",
+  });
+  const [isSavingPersonal, setIsSavingPersonal] = useState(false);
 
   const tabs = [
     { id: "PERSONAL", label: t("profile.personal_info"), icon: User },
@@ -39,6 +47,42 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({ isOpen, onClose })
     { id: "PAYMENTS", label: t("profile.payments"), icon: CreditCard },
     { id: "SECURITY", label: t("profile.security"), icon: Shield },
   ];
+
+  useEffect(() => {
+    if (!user) return;
+    setPersonalForm({
+      first_name: user.first_name || "",
+      last_name: user.last_name || "",
+      email: user.email || "",
+      phone: user.phone || "",
+    });
+  }, [user]);
+
+  const handlePersonalChange = (field: keyof typeof personalForm, value: string) => {
+    setPersonalForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const handleSavePersonal = async () => {
+    setIsSavingPersonal(true);
+    try {
+      const res = await fetch("/api/user/profile", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(personalForm),
+      });
+      if (!res.ok) throw new Error("Profile update failed");
+      await refreshProfile();
+      setIsEditingPersonal(false);
+      toast({ title: t("common.success"), description: t("profile.edit_details") });
+    } catch {
+      toast({ title: t("common.error"), description: "Could not update profile details.", variant: "destructive" });
+    } finally {
+      setIsSavingPersonal(false);
+    }
+  };
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -88,21 +132,61 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({ isOpen, onClose })
                 </div>
                 <div className="grid grid-cols-2 gap-6">
                   {[
-                    { label: t("profile.first_name"), value: user?.first_name },
-                    { label: t("profile.last_name"), value: user?.last_name },
-                    { label: t("profile.email"), value: user?.email },
-                    { label: t("profile.phone"), value: user?.phone || t("common.not_set") },
+                    { label: t("profile.first_name"), value: personalForm.first_name, field: "first_name" },
+                    { label: t("profile.last_name"), value: personalForm.last_name, field: "last_name" },
+                    { label: t("profile.email"), value: personalForm.email, field: "email" },
+                    { label: t("profile.phone"), value: personalForm.phone, field: "phone" },
                   ].map((field) => (
                     <div key={field.label} className="space-y-2 p-5 bg-white/[0.03] border border-white/5 rounded-3xl group hover:border-white/10 transition-all text-left">
                       <p className="text-[10px] uppercase font-bold text-primary tracking-widest">{field.label}</p>
-                      <p className="text-sm font-bold text-white/90">{field.value}</p>
+                      {isEditingPersonal ? (
+                        <input
+                          value={field.value}
+                          onChange={(event) => handlePersonalChange(field.field as keyof typeof personalForm, event.target.value)}
+                          className="w-full rounded-2xl border border-white/10 bg-white/[0.05] px-4 py-3 text-sm font-bold text-white outline-none focus:border-primary/50"
+                        />
+                      ) : (
+                        <p className="text-sm font-bold text-white/90">{field.value || t("common.not_set")}</p>
+                      )}
                     </div>
                   ))}
                 </div>
-                <div className="text-left">
-                  <button className="px-8 py-3 bg-white/5 text-white text-xs font-bold rounded-xl border border-white/10 hover:bg-white/10 transition-all">
-                    {t("profile.edit_details")}
-                  </button>
+                <div className="flex flex-wrap gap-3 text-left">
+                  {isEditingPersonal ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleSavePersonal}
+                        disabled={isSavingPersonal}
+                        className="px-8 py-3 bg-primary text-white text-xs font-bold rounded-xl border border-primary shadow-lg shadow-primary/20 hover:opacity-90 transition-all disabled:opacity-60"
+                      >
+                        {isSavingPersonal ? "Saving..." : "Save profile changes"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsEditingPersonal(false);
+                          setPersonalForm({
+                            first_name: user?.first_name || "",
+                            last_name: user?.last_name || "",
+                            email: user?.email || "",
+                            phone: user?.phone || "",
+                          });
+                        }}
+                        className="px-8 py-3 bg-white/5 text-white text-xs font-bold rounded-xl border border-white/10 hover:bg-white/10 transition-all"
+                      >
+                        {t("common.cancel")}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingPersonal(true)}
+                      className="px-8 py-3 bg-white/5 text-white text-xs font-bold rounded-xl border border-white/10 hover:bg-white/10 transition-all"
+                    >
+                      {t("profile.edit_details")}
+                    </button>
+                  )}
                 </div>
               </motion.div>
             )}

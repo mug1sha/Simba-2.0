@@ -1,10 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
-import { fetchCategories, getCategoryIcon, fetchProducts } from "@/lib/products";
+import { getCategoryIcon, type Product } from "@/lib/products";
 import { useLanguage } from "@/contexts/LanguageContext";
 
 interface CategorySectionProps {
   onSelectCategory: (category: string) => void;
   selectedCategory: string;
+  products: Product[];
+  categories: string[];
 }
 
 const cardAccents = [
@@ -35,25 +36,20 @@ const cardAccents = [
   },
 ];
 
-const CategorySection = ({ onSelectCategory, selectedCategory }: CategorySectionProps) => {
+const CategorySection = ({ onSelectCategory, selectedCategory, products, categories }: CategorySectionProps) => {
   const { t } = useLanguage();
-  const { data: categories = [] } = useQuery({
-    queryKey: ["categories"],
-    queryFn: fetchCategories,
-  });
-
-  const { data: allProducts = [] } = useQuery({
-    queryKey: ["all-products-for-count"],
-    queryFn: () => fetchProducts(),
-  });
+  const allProducts = products;
 
   return (
     <section id="categories" className="section-padding">
       <div className="container mx-auto px-4">
         <div className="mb-10 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
-            <h2 className="font-heading text-3xl font-bold text-foreground md:text-4xl">{t("categories.title")}</h2>
-            <p className="mt-2 text-sm text-muted-foreground">{t("categories.subtitle")}</p>
+            <p className="text-[11px] font-black uppercase tracking-[0.3em] text-primary">Browse the aisles</p>
+            <h2 className="font-heading text-3xl font-bold text-foreground md:text-4xl">Shop by Category</h2>
+            <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+              Pick a department first, then narrow the catalog with price, availability, unit, and search filters below.
+            </p>
           </div>
           <p className="text-[11px] font-black uppercase tracking-[0.24em] text-muted-foreground">
             {allProducts.length} {t("categories.items")}

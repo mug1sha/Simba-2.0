@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AreaChart as AreaChartIcon,
@@ -139,17 +139,20 @@ const BranchDashboard = () => {
     () => new Intl.NumberFormat(locale, { notation: "compact", maximumFractionDigits: 1 }),
     [locale],
   );
-  const statusLabelMap: Record<string, string> = {
-    Pending: t("branch_dashboard.status.Pending"),
-    Accepted: t("branch_dashboard.status.Accepted"),
-    Assigned: t("branch_dashboard.status.Assigned"),
-    Preparing: t("branch_dashboard.status.Preparing"),
-    "Ready for Pick-up": t("branch_dashboard.status.Ready for Pick-up"),
-    Completed: t("branch_dashboard.status.Completed"),
-    "No-show": t("branch_dashboard.status.No-show"),
-    Cancelled: t("branch_dashboard.status.Cancelled"),
-  };
-  const statusLabel = (status: string) => statusLabelMap[status] || status;
+  const statusLabelMap = useMemo<Record<string, string>>(
+    () => ({
+      Pending: t("branch_dashboard.status.Pending"),
+      Accepted: t("branch_dashboard.status.Accepted"),
+      Assigned: t("branch_dashboard.status.Assigned"),
+      Preparing: t("branch_dashboard.status.Preparing"),
+      "Ready for Pick-up": t("branch_dashboard.status.Ready for Pick-up"),
+      Completed: t("branch_dashboard.status.Completed"),
+      "No-show": t("branch_dashboard.status.No-show"),
+      Cancelled: t("branch_dashboard.status.Cancelled"),
+    }),
+    [t],
+  );
+  const statusLabel = useCallback((status: string) => statusLabelMap[status] || status, [statusLabelMap]);
 
   const { data: staffMembers = [] } = useQuery<BranchStaffMember[]>({
     queryKey: ["branch-staff", branchName],

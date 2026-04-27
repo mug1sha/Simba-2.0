@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import React, { useState, useEffect, useCallback } from "react";
+import { useSearchParams, useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "@/components/ui/use-toast";
 import { Lock, Eye, EyeOff, CheckCircle2, ShoppingBag, XCircle } from "lucide-react";
@@ -19,14 +19,15 @@ type InvitePreview = {
 export const AuthFlowPage = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { toast } = useToast();
   const { login } = useAuth();
   const { t } = useLanguage();
   
   const token = searchParams.get("token");
-  const isReset = window.location.pathname.includes("reset-password");
-  const isVerify = window.location.pathname.includes("verify-email");
-  const isInvite = window.location.pathname.includes("invite");
+  const isReset = location.pathname.includes("reset-password");
+  const isVerify = location.pathname.includes("verify-email");
+  const isInvite = location.pathname.includes("invite");
 
   const [loading, setLoading] = useState(isVerify || isInvite);
   const [status, setStatus] = useState<"IDLE" | "SUCCESS" | "ERROR">("IDLE");
@@ -60,22 +61,6 @@ export const AuthFlowPage = () => {
     { label: t("auth.strength.very_strong"), color: "bg-blue-500" },
   ];
 
-  useEffect(() => {
-    if (isVerify && token) {
-      handleVerify();
-    } else if (isInvite && token) {
-      handleInvitePreview();
-    } else if (isVerify && !token) {
-      setStatus("ERROR");
-      setErrorMsg(t("auth.flow.missing_verification_token"));
-      setLoading(false);
-    } else if (isInvite && !token) {
-      setStatus("ERROR");
-      setErrorMsg(t("auth.flow.missing_invite_token"));
-      setLoading(false);
-    }
-  }, []);
-
   const roleLabel = invitePreview?.role === "branch_manager" ? t("auth.role.admin") : t("auth.role.staff");
 
   useEffect(() => {
@@ -83,7 +68,7 @@ export const AuthFlowPage = () => {
     setBranch(invitePreview.branch || BRANCH_NAMES[0] || "");
   }, [invitePreview]);
 
-  const handleVerify = async () => {
+  const handleVerify = useCallback(async () => {
     try {
       const res = await fetch(`/api/auth/verify-email?token=${encodeURIComponent(token || "")}`, {
         method: "POST",
@@ -96,9 +81,9 @@ export const AuthFlowPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [token]);
 
-  const handleInvitePreview = async () => {
+  const handleInvitePreview = useCallback(async () => {
     try {
       const res = await fetch(`/api/auth/invites/${encodeURIComponent(token || "")}`);
       if (!res.ok) throw new Error(await readErrorMessage(res, "Invite link not found"));
@@ -113,7 +98,31 @@ export const AuthFlowPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [token]);
+
+  useEffect(() => {
+    if (isVerify && token) {
+      handleVerify();
+      return;
+    }
+    if (isInvite && token) {
+      handleInvitePreview();
+      return;
+    }
+    if (isVerify && !token) {
+      setStatus("ERROR");
+      setErrorMsg(t("auth.flow.missing_verification_token"));
+      setLoading(false);
+      return;
+    }
+    if (isInvite && !token) {
+      setStatus("ERROR");
+      setErrorMsg(t("auth.flow.missing_invite_token"));
+      setLoading(false);
+      return;
+    }
+    setLoading(false);
+  }, [handleInvitePreview, handleVerify, isInvite, isVerify, t, token]);
 
   const handleReset = async (e: React.FormEvent) => {
     e.preventDefault();

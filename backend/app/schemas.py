@@ -166,6 +166,11 @@ class LoginRequest(BaseModel):
 class LoginResponse(Token):
     user: User
 
+class GoogleAuthRequest(BaseModel):
+    credential: str
+    role: str = "customer"
+    intent: str = "login"
+
 class AuthActionResponse(BaseModel):
     status: str
     message: str
