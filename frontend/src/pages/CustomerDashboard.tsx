@@ -8,6 +8,7 @@ import CartDrawer from "@/components/CartDrawer";
 import OrderCard from "@/components/profile/OrderCard";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { readJsonResponse } from "@/lib/api";
 
 const CustomerDashboard = () => {
   const navigate = useNavigate();
@@ -22,7 +23,7 @@ const CustomerDashboard = () => {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error("Failed to load dashboard");
-      return res.json();
+      return readJsonResponse<any>(res, "Dashboard profile response was empty.");
     },
     enabled: !!token,
   });

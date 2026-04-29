@@ -1,11 +1,12 @@
 import { Bell, Info, Package, Sparkles } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { 
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { readJsonResponse } from "@/lib/api";
 
 interface NotificationCenterProps {
   token: string | null;
@@ -22,7 +23,7 @@ const NotificationCenter = ({ token }: NotificationCenterProps) => {
           headers: { Authorization: `Bearer ${token}` }
         });
         if (!res.ok) return [];
-        return res.json();
+        return readJsonResponse<any[]>(res, "Notifications response was empty.");
       } catch (err) {
         console.error("Error fetching notifications:", err);
         return [];

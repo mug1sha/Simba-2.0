@@ -12,6 +12,7 @@ import {
 import { AuthDialog } from "@/components/AuthDialog";
 import { useQuery } from "@tanstack/react-query";
 import { fetchProducts, formatPrice } from "@/lib/products";
+import { readJsonResponse } from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
 import { ProfileDialog } from "@/components/ProfileDialog";
 import NotificationCenter from "./NotificationCenter";
@@ -57,7 +58,7 @@ const Navbar = ({ searchQuery, onSearchChange }: NavbarProps) => {
           headers: { Authorization: `Bearer ${token}` }
         });
         if (!res.ok) return [];
-        return res.json();
+        return readJsonResponse<any[]>(res, "Price drop response was empty.");
       } catch (err) {
         console.error("Error fetching price drops:", err);
         return [];
