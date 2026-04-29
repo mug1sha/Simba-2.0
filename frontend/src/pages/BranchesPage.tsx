@@ -342,9 +342,23 @@ const BranchesPage = () => {
     queryFn: async () => {
       const params = new URLSearchParams({ branch: activeBranch.name });
       if (stockSearch.trim()) params.set("search", stockSearch.trim());
-      const res = await fetch(`/api/branches/stock?${params.toString()}`);
-      if (!res.ok) throw new Error(await readErrorMessage(res, "Failed to fetch branch stock"));
-      return readJsonResponse<BranchStock[]>(res, "Branch stock response was empty.");
+
+      const fetchBranchStock = async (url: string) => {
+        const res = await fetch(url);
+        if (!res.ok) {
+          throw new Error(await readErrorMessage(res, "Failed to fetch branch stock"));
+        }
+        return readJsonResponse<BranchStock[]>(res, "Branch stock response was empty.");
+      };
+
+      try {
+        return await fetchBranchStock(`/api/branches/stock?${params.toString()}`);
+      } catch (error) {
+        if (!(error instanceof Error) || !/not found/i.test(error.message)) {
+          throw error;
+        }
+        return fetchBranchStock(`/api/branch/stock?${params.toString()}`);
+      }
     },
   });
 

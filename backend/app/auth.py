@@ -67,7 +67,7 @@ def verify_google_token(credential: str):
 
     return token_data
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+def get_user_from_token(token: str, db: Session):
     from . import crud
 
     credentials_exception = HTTPException(
@@ -85,6 +85,9 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     if user is None:
         raise credentials_exception
     return user
+
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    return get_user_from_token(token, db)
 
 def require_roles(*allowed_roles: str) -> Callable:
     def dependency(user: models.User = Depends(get_current_user)):

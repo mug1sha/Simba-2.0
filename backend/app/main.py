@@ -438,10 +438,26 @@ def branch_no_show_order(
 
 @app.get("/api/branch/stock", response_model=List[schemas.BranchStock], tags=["Branch Operations"])
 def branch_stock(
+    branch: Optional[str] = None,
     search: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
-    user: models.User = Depends(auth.require_roles(auth.ROLE_BRANCH_MANAGER)),
 ):
+    if branch:
+        if branch not in crud.SIMBA_BRANCHES:
+            raise HTTPException(status_code=400, detail="Unknown branch")
+        return crud.get_branch_stock(db, branch=branch, search=search, in_stock_only=True)
+
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    token = authorization.split(" ", 1)[1].strip()
+    user = auth.get_user_from_token(token, db)
+    if user.role != auth.ROLE_BRANCH_MANAGER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this resource",
+        )
     return crud.get_branch_stock(db, branch=user.branch, search=search, in_stock_only=True)
 
 @app.post("/api/branch/stock/{product_id}/out-of-stock", response_model=schemas.BranchStock, tags=["Branch Operations"])
