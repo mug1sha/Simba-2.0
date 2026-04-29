@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { readErrorMessage, readJsonResponse } from "@/lib/api";
+import { buildApiUrl, readErrorMessage, readJsonResponse } from "@/lib/api";
 
 type GoogleAuthIntent = "login" | "signup";
 
@@ -72,7 +72,7 @@ const GoogleAuthButton = ({ intent, onSuccess, onError }: GoogleAuthButtonProps)
 
         setIsLoading(true);
         try {
-          const res = await fetch("/api/auth/google", {
+          const res = await fetch(buildApiUrl("/api/auth/google"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

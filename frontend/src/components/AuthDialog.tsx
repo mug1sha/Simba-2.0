@@ -6,7 +6,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { Eye, EyeOff, Mail, Lock, User, ShoppingBag, ArrowRight, CheckCircle2, Phone, LucideIcon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { getRoleDashboardPath, type UserRole } from "@/lib/auth";
-import { readErrorMessage, readJsonResponse } from "@/lib/api";
+import { buildApiUrl, readErrorMessage, readJsonResponse } from "@/lib/api";
 import { useLanguage } from "@/contexts/LanguageContext";
 import GoogleAuthButton from "@/components/GoogleAuthButton";
 
@@ -138,7 +138,7 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
     const loadManagerInvites = async () => {
       setManagerInvitesLoading(true);
       try {
-        const res = await fetch("/api/dev/manager-invites");
+        const res = await fetch(buildApiUrl("/api/dev/manager-invites"));
         if (!res.ok) {
           throw new Error("Manager invite lookup unavailable");
         }
@@ -166,7 +166,7 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault(); setLoading(true);
     try {
-      const res = await fetch("/api/auth/login", {
+      const res = await fetch(buildApiUrl("/api/auth/login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password: pwd, role: selectedRole }),
@@ -201,7 +201,7 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
     if (!email) return toast({ title: t("auth.toast.email_required"), description: t("auth.toast.enter_email_first"), variant: "destructive" });
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/resend-verification", {
+      const res = await fetch(buildApiUrl("/api/auth/resend-verification"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email })
@@ -231,7 +231,7 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
     
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/register", { 
+      const res = await fetch(buildApiUrl("/api/auth/register"), { 
         method: "POST", 
         headers: { "Content-Type": "application/json" }, 
         body: JSON.stringify({ email, phone, password: pwd, first_name: firstName, last_name: lastName }) 
@@ -253,7 +253,7 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault(); setLoading(true);
     try {
-      const res = await fetch("/api/auth/forgot-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
+      const res = await fetch(buildApiUrl("/api/auth/forgot-password"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
       if (!res.ok) throw new Error(await readErrorMessage(res, "Request failed"));
       const data = await readJsonResponse(res, "Password reset request returned an empty response.");
       setSuccessInfo({

@@ -5,7 +5,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { Lock, Eye, EyeOff, CheckCircle2, ShoppingBag, XCircle } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getRoleDashboardPath } from "@/lib/auth";
-import { readErrorMessage, readJsonResponse } from "@/lib/api";
+import { buildApiUrl, readErrorMessage, readJsonResponse } from "@/lib/api";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { BRANCH_NAMES } from "@/lib/branches";
 
@@ -85,7 +85,7 @@ export const AuthFlowPage = () => {
 
   const handleInvitePreview = useCallback(async () => {
     try {
-      const res = await fetch(`/api/auth/invites/${encodeURIComponent(token || "")}`);
+      const res = await fetch(buildApiUrl(`/api/auth/invites/${encodeURIComponent(token || "")}`));
       if (!res.ok) throw new Error(await readErrorMessage(res, "Invite link not found"));
       const data = await readJsonResponse(res, "Invite link response was empty.");
       setInvitePreview(data);
@@ -130,7 +130,7 @@ export const AuthFlowPage = () => {
     if (newPwd !== confirmPwd) return toast({ title: t("common.error"), description: t("auth.toast.passwords_do_not_match"), variant: "destructive" });
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/reset-password", {
+      const res = await fetch(buildApiUrl("/api/auth/reset-password"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, new_password: newPwd })
@@ -155,7 +155,7 @@ export const AuthFlowPage = () => {
 
     setLoading(true);
     try {
-      const res = await fetch(`/api/auth/invites/${encodeURIComponent(token)}/accept`, {
+      const res = await fetch(buildApiUrl(`/api/auth/invites/${encodeURIComponent(token)}/accept`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

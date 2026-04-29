@@ -6,7 +6,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { readJsonResponse } from "@/lib/api";
+import { buildApiUrl, readJsonResponse } from "@/lib/api";
 
 interface NotificationCenterProps {
   token: string | null;
@@ -19,7 +19,7 @@ const NotificationCenter = ({ token }: NotificationCenterProps) => {
     queryFn: async () => {
       if (!token) return [];
       try {
-        const res = await fetch("/api/user/notifications", {
+        const res = await fetch(buildApiUrl("/api/user/notifications"), {
           headers: { Authorization: `Bearer ${token}` }
         });
         if (!res.ok) return [];
@@ -37,7 +37,7 @@ const NotificationCenter = ({ token }: NotificationCenterProps) => {
 
   const markRead = async (id: number) => {
     try {
-      await fetch(`/api/user/notifications/${id}/read`, {
+      await fetch(buildApiUrl(`/api/user/notifications/${id}/read`), {
         method: "PATCH",
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -49,7 +49,7 @@ const NotificationCenter = ({ token }: NotificationCenterProps) => {
 
   const markAllRead = async () => {
     try {
-      await fetch("/api/user/notifications/read-all", {
+      await fetch(buildApiUrl("/api/user/notifications/read-all"), {
         method: "PATCH",
         headers: { Authorization: `Bearer ${token}` }
       });

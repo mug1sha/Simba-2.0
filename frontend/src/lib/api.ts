@@ -1,3 +1,21 @@
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
+
+export const buildApiUrl = (path: string) => {
+  if (/^https?:\/\//i.test(path)) return path;
+
+  const base = API_BASE_URL.replace(/\/+$/, "");
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+
+  if (normalizedPath === "/api" || normalizedPath.startsWith("/api/")) {
+    if (base.endsWith("/api")) {
+      return `${base}${normalizedPath.slice(4) || ""}`;
+    }
+    return `${base}${normalizedPath}`;
+  }
+
+  return `${base}${normalizedPath}`;
+};
+
 const flattenErrorParts = (value: unknown): string[] => {
   if (!value) return [];
   if (typeof value === "string") return [value];

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
-import { readJsonResponse } from "@/lib/api";
+import { buildApiUrl, readJsonResponse } from "@/lib/api";
 
 interface User {
   id: number;
@@ -52,7 +52,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return null;
     }
     try {
-      const res = await fetch("/api/user/profile", {
+      const res = await fetch(buildApiUrl("/api/user/profile"), {
         headers: { Authorization: `Bearer ${activeToken}` }
       });
       if (res.ok) {

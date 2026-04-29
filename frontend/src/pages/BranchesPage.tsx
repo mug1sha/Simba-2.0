@@ -17,7 +17,7 @@ import CartDrawer from "@/components/CartDrawer";
 import ChatWidget from "@/components/ChatWidget";
 import { useCart } from "@/contexts/CartContext";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { readErrorMessage, readJsonResponse } from "@/lib/api";
+import { buildApiUrl, readErrorMessage, readJsonResponse } from "@/lib/api";
 import { formatPrice } from "@/lib/products";
 import {
   BRANCH_LOCATIONS,
@@ -150,7 +150,7 @@ const buildFallbackBranchInventory = (
 };
 
 const readFallbackBranchInventory = async (branchName: string, search: string) => {
-  const res = await fetch("/api/products?limit=1000");
+  const res = await fetch(buildApiUrl("/api/products?limit=1000"));
   if (!res.ok) {
     throw new Error(await readErrorMessage(res, "Failed to fetch catalog fallback"));
   }
@@ -331,7 +331,7 @@ const BranchesPage = () => {
   const { data: branchRatings = [] } = useQuery({
     queryKey: ["branch-ratings"],
     queryFn: async () => {
-      const res = await fetch("/api/branches/ratings");
+      const res = await fetch(buildApiUrl("/api/branches/ratings"));
       if (!res.ok) return [];
       return res.json();
     },
@@ -445,7 +445,7 @@ const BranchesPage = () => {
       if (stockSearch.trim()) params.set("search", stockSearch.trim());
 
       const fetchBranchStock = async (url: string) => {
-        const res = await fetch(url);
+        const res = await fetch(buildApiUrl(url));
         if (!res.ok) {
           throw new Error(await readErrorMessage(res, "Failed to fetch branch stock"));
         }

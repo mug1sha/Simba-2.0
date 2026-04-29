@@ -8,7 +8,7 @@ import CartDrawer from "@/components/CartDrawer";
 import OrderCard from "@/components/profile/OrderCard";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { readJsonResponse } from "@/lib/api";
+import { buildApiUrl, readJsonResponse } from "@/lib/api";
 
 const CustomerDashboard = () => {
   const navigate = useNavigate();
@@ -19,7 +19,7 @@ const CustomerDashboard = () => {
   const { data: profile, isLoading, refetch } = useQuery({
     queryKey: ["customer-dashboard-profile"],
     queryFn: async () => {
-      const res = await fetch("/api/user/profile", {
+      const res = await fetch(buildApiUrl("/api/user/profile"), {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error("Failed to load dashboard");

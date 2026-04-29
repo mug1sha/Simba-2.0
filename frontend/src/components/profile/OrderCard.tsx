@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { readJsonResponse } from "@/lib/api";
+import { buildApiUrl, readJsonResponse } from "@/lib/api";
 
 interface OrderCardProps {
   order: any;
@@ -61,7 +61,7 @@ const OrderCard = ({ order, onCancel }: OrderCardProps) => {
       if (!token || order.fulfillment_type !== "pickup") return;
 
       try {
-        const res = await fetch(`/api/user/orders/${order.id}/branch-review`, {
+        const res = await fetch(buildApiUrl(`/api/user/orders/${order.id}/branch-review`), {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) return;
@@ -85,7 +85,7 @@ const OrderCard = ({ order, onCancel }: OrderCardProps) => {
   const handleCancel = async () => {
     if (!confirm(t("order.confirm_cancel"))) return;
     try {
-      const res = await fetch(`/api/user/orders/${order.id}/cancel`, {
+      const res = await fetch(buildApiUrl(`/api/user/orders/${order.id}/cancel`), {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -99,7 +99,7 @@ const OrderCard = ({ order, onCancel }: OrderCardProps) => {
 
   const handleReturn = async () => {
     try {
-      const res = await fetch(`/api/user/orders/${order.id}/return`, {
+      const res = await fetch(buildApiUrl(`/api/user/orders/${order.id}/return`), {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -114,7 +114,7 @@ const OrderCard = ({ order, onCancel }: OrderCardProps) => {
   const submitBranchReview = async () => {
     setIsSubmittingReview(true);
     try {
-      const res = await fetch(`/api/user/orders/${order.id}/branch-review`, {
+      const res = await fetch(buildApiUrl(`/api/user/orders/${order.id}/branch-review`), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

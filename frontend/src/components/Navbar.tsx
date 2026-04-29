@@ -12,7 +12,7 @@ import {
 import { AuthDialog } from "@/components/AuthDialog";
 import { useQuery } from "@tanstack/react-query";
 import { fetchProducts, formatPrice } from "@/lib/products";
-import { readJsonResponse } from "@/lib/api";
+import { buildApiUrl, readJsonResponse } from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
 import { ProfileDialog } from "@/components/ProfileDialog";
 import NotificationCenter from "./NotificationCenter";
@@ -54,7 +54,7 @@ const Navbar = ({ searchQuery, onSearchChange }: NavbarProps) => {
     queryFn: async () => {
       if (!isAuthenticated || !token) return [];
       try {
-        const res = await fetch("/api/user/favorites/price-drops", {
+        const res = await fetch(buildApiUrl("/api/user/favorites/price-drops"), {
           headers: { Authorization: `Bearer ${token}` }
         });
         if (!res.ok) return [];
