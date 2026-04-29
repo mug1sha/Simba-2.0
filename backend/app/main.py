@@ -8,7 +8,16 @@ from .database import SessionLocal, engine, get_db, ensure_runtime_schema, sqlit
 from .email_service import read_dev_mailbox
 
 APP_ENV = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", "development")).lower()
-CORS_ORIGINS = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "").split(",") if origin.strip()]
+FRONTEND_URL = os.getenv("FRONTEND_URL", "").strip()
+
+
+def parse_origins(value: str) -> List[str]:
+    return [origin.strip() for origin in value.split(",") if origin.strip()]
+
+
+CORS_ORIGINS = parse_origins(os.getenv("CORS_ORIGINS", ""))
+if FRONTEND_URL and FRONTEND_URL not in CORS_ORIGINS:
+    CORS_ORIGINS.append(FRONTEND_URL)
 if not CORS_ORIGINS and APP_ENV not in {"production", "prod"}:
     CORS_ORIGINS = ["http://127.0.0.1:8080", "http://localhost:8080", "http://localhost:8083", "http://localhost:5173"]
 if not CORS_ORIGINS:

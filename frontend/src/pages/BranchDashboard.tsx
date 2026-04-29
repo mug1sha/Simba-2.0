@@ -1,30 +1,30 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
-  ArrowUpRight,
   BellRing,
   CheckCircle2,
+  ClipboardList,
   Clock3,
+  LayoutGrid,
+  type LucideIcon,
   PackageCheck,
   RefreshCcw,
-  Sparkles,
+  Search,
+  ShieldCheck,
+  Store,
   UserRound,
   Users,
+  Warehouse,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
-import { readErrorMessage } from "@/lib/api";
+import { useLanguage } from "@/contexts/LanguageContext";
+import { buildApiUrl, readErrorMessage, readJsonResponse } from "@/lib/api";
 import { formatPrice } from "@/lib/products";
 import { cn } from "@/lib/utils";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 
 type BranchOrder = {
   id: number;
@@ -38,6 +38,7 @@ type BranchOrder = {
   customer_name?: string | null;
   customer_phone?: string | null;
   created_at: string;
+  updated_at?: string | null;
 };
 
 type BranchStaffMember = {
@@ -45,64 +46,54 @@ type BranchStaffMember = {
   email: string;
   first_name?: string | null;
   last_name?: string | null;
+  role: string;
   branch?: string | null;
+};
+
+type BranchStockItem = {
+  id: number;
+  product_id: number;
+  stock_count: number;
+  product: {
+    id: number;
+    name: string;
+    price: number;
+    category: string;
+    image: string;
+    unit: string;
+  };
+};
+
+type RoleInviteLink = {
+  email?: string | null;
+  role: "branch_manager" | "branch_staff";
+  branch?: string | null;
+  expires_at: string;
+  invite_url: string;
+};
+
+type OrderActionVariables = {
+  orderId: number;
+  endpoint: "accept" | "assign" | "start" | "ready" | "complete" | "no-show";
+  body?: Record<string, unknown>;
 };
 
 type OrderItem = {
   id?: number | string;
   name?: string;
   quantity?: number;
-  image?: string;
 };
 
-type OrderActionVariables = {
-  orderId: number;
-  endpoint: "accept" | "assign" | "start" | "ready" | "complete";
-  body?: Record<string, unknown>;
-  silent?: boolean;
+type SidebarItem = {
+  id: WorkspaceSection;
+  label: string;
+  icon: LucideIcon;
 };
 
-type AlertItem = {
-  id: string;
-  tone: "danger" | "warn" | "info";
-  title: string;
-  detail: string;
-};
-
-type Presence = "busy" | "idle" | "offline";
+type WorkspaceSection = "overview" | "analytics" | "orders" | "staff" | "inventory" | "invites";
 
 const TERMINAL_STATUSES = new Set(["Completed", "Cancelled", "No-show"]);
-
-const KANBAN_COLUMNS = [
-  {
-    id: "pending",
-    title: "Pending Orders",
-    description: "New customer orders waiting for manager review.",
-    statuses: ["Pending"],
-    accent: "#ff7b29",
-  },
-  {
-    id: "assigning",
-    title: "Accepted / Assigning",
-    description: "Accepted orders that need a staff owner.",
-    statuses: ["Accepted", "Assigned"],
-    accent: "#ffb44d",
-  },
-  {
-    id: "preparing",
-    title: "In Preparation",
-    description: "Orders currently being assembled by the branch team.",
-    statuses: ["Preparing"],
-    accent: "#facc15",
-  },
-  {
-    id: "ready",
-    title: "Ready for Pickup",
-    description: "Orders staged and waiting for customer collection.",
-    statuses: ["Ready for Pick-up"],
-    accent: "#34d399",
-  },
-] as const;
+const ORDER_FILTERS = ["all", "Pending", "Accepted", "Assigned", "Preparing", "Ready for Pick-up", "Completed"] as const;
 
 const parseItems = (items: string): OrderItem[] => {
   try {
@@ -118,122 +109,287 @@ const getStaffLabel = (staff: BranchStaffMember) => {
   return fullName || staff.email;
 };
 
-const minutesSince = (createdAt: string, now: number) => {
-  const timestamp = new Date(createdAt).getTime();
+const minutesSince = (value: string) => {
+  const timestamp = new Date(value).getTime();
   if (Number.isNaN(timestamp)) return 0;
-  return Math.max(0, Math.round((now - timestamp) / 60000));
+  return Math.max(0, Math.round((Date.now() - timestamp) / 60000));
 };
 
-const formatMinutesLabel = (minutes: number) => {
+const formatMinutes = (minutes: number) => {
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   const remainder = minutes % 60;
   return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
 };
 
-const formatSincePlaced = (minutes: number) => {
-  if (minutes < 1) return "just now";
-  return `${formatMinutesLabel(minutes)} ago`;
+const formatDateTime = (value?: string | null) => {
+  if (!value) return "--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
 };
 
-const getUrgencyLevel = (minutes: number) => {
-  if (minutes >= 45) return "critical";
-  if (minutes >= 20) return "high";
-  if (minutes >= 10) return "elevated";
-  return "normal";
+const statusTone = (status: string) => {
+  switch (status) {
+    case "Pending":
+      return "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-200";
+    case "Accepted":
+    case "Assigned":
+      return "border-orange-500/20 bg-orange-500/10 text-orange-700 dark:text-orange-200";
+    case "Preparing":
+      return "border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-200";
+    case "Ready for Pick-up":
+    case "Completed":
+      return "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200";
+    case "Cancelled":
+    case "No-show":
+      return "border-rose-500/20 bg-rose-500/10 text-rose-700 dark:text-rose-200";
+    default:
+      return "border-border bg-muted text-muted-foreground";
+  }
 };
 
-const getUrgencyClasses = (minutes: number) => {
-  const level = getUrgencyLevel(minutes);
-  if (level === "critical") {
-    return {
-      dot: "bg-rose-400 shadow-[0_0_18px_rgba(251,113,133,0.9)]",
-      pill: "border-rose-500/40 bg-rose-500/12 text-rose-200",
-      card: "border-rose-500/35 shadow-[0_0_0_1px_rgba(244,63,94,0.18),0_24px_80px_rgba(127,29,29,0.25)] animate-pulse",
-      label: "Critical",
-    };
-  }
-  if (level === "high") {
-    return {
-      dot: "bg-amber-400 shadow-[0_0_18px_rgba(251,191,36,0.75)]",
-      pill: "border-amber-500/40 bg-amber-500/12 text-amber-100",
-      card: "border-amber-400/30 shadow-[0_18px_50px_rgba(180,83,9,0.22)]",
-      label: "High",
-    };
-  }
-  if (level === "elevated") {
-    return {
-      dot: "bg-orange-300",
-      pill: "border-orange-400/30 bg-orange-400/12 text-orange-100",
-      card: "border-white/12",
-      label: "Watch",
-    };
-  }
-  return {
-    dot: "bg-emerald-300",
-    pill: "border-emerald-500/30 bg-emerald-500/10 text-emerald-100",
-    card: "border-white/12",
-    label: "On track",
-  };
-};
+const SectionShell = ({
+  id,
+  title,
+  description,
+  actions,
+  children,
+}: {
+  id: string;
+  title: string;
+  description?: string;
+  actions?: ReactNode;
+  children: ReactNode;
+}) => (
+  <section id={id} className="rounded-[28px] border border-border bg-card shadow-sm">
+    <div className="flex flex-col gap-4 border-b border-border px-5 py-5 lg:flex-row lg:items-start lg:justify-between">
+      <div>
+        <h2 className="text-lg font-black tracking-tight text-foreground">{title}</h2>
+        {description ? <p className="mt-1 text-sm text-muted-foreground">{description}</p> : null}
+      </div>
+      {actions}
+    </div>
+    <div className="p-5">{children}</div>
+  </section>
+);
 
-const getColumnForStatus = (status: string) => {
-  return KANBAN_COLUMNS.find((column) => column.statuses.includes(status as never))?.id ?? "pending";
-};
+const StatCard = ({
+  label,
+  value,
+  detail,
+  icon: Icon,
+}: {
+  label: string;
+  value: string | number;
+  detail: string;
+  icon: LucideIcon;
+}) => (
+  <div className="rounded-[24px] border border-border bg-background p-5 shadow-sm">
+    <div className="flex items-start justify-between gap-4">
+      <div>
+        <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-muted-foreground">{label}</p>
+        <p className="mt-3 text-3xl font-black tracking-tight text-foreground">{value}</p>
+        <p className="mt-2 text-sm text-muted-foreground">{detail}</p>
+      </div>
+      <div className="rounded-2xl border border-primary/15 bg-primary/10 p-3 text-primary">
+        <Icon className="h-5 w-5" />
+      </div>
+    </div>
+  </div>
+);
+
+const SidebarContent = ({
+  items,
+  branchName,
+  currentUserLabel,
+  isManager,
+  activeSection,
+  onSelect,
+  onNavigate,
+  onClose,
+}: {
+  items: SidebarItem[];
+  branchName: string;
+  currentUserLabel: string;
+  isManager: boolean;
+  activeSection: WorkspaceSection;
+  onSelect: (section: WorkspaceSection) => void;
+  onNavigate?: () => void;
+  onClose: () => void;
+}) => (
+  <div className="flex h-full flex-col">
+    <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-5">
+      <div className="flex items-center gap-3">
+        <div className="rounded-2xl bg-primary p-2.5 text-primary-foreground shadow-sm">
+          <Store className="h-5 w-5" />
+        </div>
+        <div className="min-w-0">
+          <p className="truncate text-lg font-black tracking-tight text-foreground">Simba Ops</p>
+          <p className="truncate text-xs font-medium text-muted-foreground">{branchName}</p>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onClose}
+        className="rounded-2xl border border-border bg-background p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        aria-label="Close sidebar"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+
+    <div className="flex-1 overflow-y-auto px-4 py-5">
+      <p className="px-3 text-[11px] font-bold uppercase tracking-[0.22em] text-muted-foreground">Workspace</p>
+      <nav className="mt-3 space-y-1">
+        {items.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => {
+                onSelect(item.id);
+                onNavigate?.();
+              }}
+              className={cn(
+                "flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm font-semibold transition-all",
+                activeSection === item.id
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+            >
+              <Icon className={cn("h-4 w-4", activeSection === item.id ? "text-primary-foreground" : "text-primary")} />
+              <span className="truncate">{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+    </div>
+
+    <div className="border-t border-border bg-card px-4 py-4">
+      <div className="rounded-[24px] border border-border bg-background p-4">
+        <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-muted-foreground">Signed in</p>
+        <p className="mt-3 truncate text-sm font-semibold text-foreground">{currentUserLabel}</p>
+        <p className="mt-1 text-sm text-primary">{isManager ? "Branch Manager" : "Branch Staff"}</p>
+      </div>
+    </div>
+  </div>
+);
 
 const BranchDashboard = () => {
   const queryClient = useQueryClient();
   const { token, user } = useAuth();
-  const [now, setNow] = useState(() => Date.now());
-  const [draggingOrderId, setDraggingOrderId] = useState<number | null>(null);
-  const [hoveredColumn, setHoveredColumn] = useState<string | null>(null);
-  const [hoveredStaffId, setHoveredStaffId] = useState<number | null>(null);
-  const [staffSelectionByOrder, setStaffSelectionByOrder] = useState<Record<number, string>>({});
-  const [quickAssignOrderId, setQuickAssignOrderId] = useState("");
-  const [quickAssignStaffId, setQuickAssignStaffId] = useState("");
-  const [analyticsOpen, setAnalyticsOpen] = useState(false);
-  const [newOrderFlash, setNewOrderFlash] = useState(false);
-  const quickAssignRef = useRef<HTMLDivElement | null>(null);
-  const seenOrderIdsRef = useRef<number[] | null>(null);
+  const { t } = useLanguage();
 
   const isManager = user?.role === "branch_manager";
   const branchName = user?.branch || "Simba Branch";
-  const currentUserLabel = user ? [user.first_name, user.last_name].filter(Boolean).join(" ").trim() || user.email : "Operations";
+  const currentUserLabel = user
+    ? [user.first_name, user.last_name].filter(Boolean).join(" ").trim() || user.email
+    : t("branch_dashboard.operations_user");
+
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(288);
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const [activeSection, setActiveSection] = useState<WorkspaceSection>("overview");
+  const [orderFilter, setOrderFilter] = useState<(typeof ORDER_FILTERS)[number]>("all");
+  const [orderSearch, setOrderSearch] = useState("");
+  const deferredOrderSearch = useDeferredValue(orderSearch.trim().toLowerCase());
+  const [staffSelectionByOrder, setStaffSelectionByOrder] = useState<Record<number, string>>({});
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [latestInvite, setLatestInvite] = useState<RoleInviteLink | null>(null);
+  const [inventorySearch, setInventorySearch] = useState("");
+  const deferredInventorySearch = useDeferredValue(inventorySearch.trim());
+
+  const sidebarItems = useMemo<SidebarItem[]>(() => {
+    const baseItems: SidebarItem[] = [
+      { id: "overview", label: "Overview", icon: LayoutGrid },
+      { id: "analytics", label: "Analytics", icon: ClipboardList },
+      { id: "orders", label: "Orders", icon: PackageCheck },
+      { id: "staff", label: "Staff", icon: Users },
+    ];
+    if (isManager) {
+      baseItems.push({ id: "inventory", label: "Inventory", icon: Warehouse });
+      baseItems.push({ id: "invites", label: "Invites", icon: ShieldCheck });
+    }
+    return baseItems;
+  }, [isManager]);
+
+  const activeSidebarItem = sidebarItems.find((item) => item.id === activeSection) ?? sidebarItems[0];
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 30000);
-    return () => window.clearInterval(timer);
-  }, []);
+    if (!isResizingSidebar) return;
 
-  const { data: staffMembers = [] } = useQuery<BranchStaffMember[]>({
-    queryKey: ["branch-staff", branchName],
-    queryFn: async () => {
-      const res = await fetch("/api/branch/staff", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error("Failed to load branch staff.");
-      return res.json();
-    },
-    enabled: !!token && !!user,
-    refetchInterval: 15000,
-  });
+    const handlePointerMove = (event: PointerEvent) => {
+      const nextWidth = Math.min(380, Math.max(220, event.clientX));
+      setSidebarWidth(nextWidth);
+    };
 
-  const { data: orders = [], isLoading: ordersLoading, isFetching: ordersRefreshing } = useQuery<BranchOrder[]>({
+    const stopResize = () => setIsResizingSidebar(false);
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopResize);
+    window.addEventListener("pointercancel", stopResize);
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopResize);
+      window.removeEventListener("pointercancel", stopResize);
+    };
+  }, [isResizingSidebar]);
+
+  const ordersQuery = useQuery<BranchOrder[]>({
     queryKey: ["branch-orders", branchName, user?.role],
     queryFn: async () => {
-      const res = await fetch("/api/branch/orders", {
+      const res = await fetch(buildApiUrl("/api/branch/orders"), {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error("Failed to load branch orders.");
-      return res.json();
+      if (!res.ok) {
+        throw new Error(await readErrorMessage(res, t("branch_dashboard.error.orders_load")));
+      }
+      return readJsonResponse<BranchOrder[]>(res, "Branch orders response was empty.");
     },
     enabled: !!token && !!user,
     refetchInterval: 5000,
   });
 
+  const staffQuery = useQuery<BranchStaffMember[]>({
+    queryKey: ["branch-staff", branchName],
+    queryFn: async () => {
+      const res = await fetch(buildApiUrl("/api/branch/staff"), {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        throw new Error(await readErrorMessage(res, t("branch_dashboard.error.staff_load")));
+      }
+      return readJsonResponse<BranchStaffMember[]>(res, "Branch staff response was empty.");
+    },
+    enabled: !!token && !!user,
+    refetchInterval: 15000,
+  });
+
+  const stockQuery = useQuery<BranchStockItem[]>({
+    queryKey: ["branch-stock", branchName, deferredInventorySearch],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (deferredInventorySearch) params.set("search", deferredInventorySearch);
+      const suffix = params.toString() ? `?${params.toString()}` : "";
+      const res = await fetch(buildApiUrl(`/api/branch/stock${suffix}`), {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        throw new Error(await readErrorMessage(res, t("branch_dashboard.error.stock_load")));
+      }
+      return readJsonResponse<BranchStockItem[]>(res, "Branch stock response was empty.");
+    },
+    enabled: !!token && !!isManager,
+    refetchInterval: 30000,
+  });
+
   const orderAction = useMutation({
     mutationFn: async ({ orderId, endpoint, body }: OrderActionVariables) => {
-      const res = await fetch(`/api/branch/orders/${orderId}/${endpoint}`, {
+      const res = await fetch(buildApiUrl(`/api/branch/orders/${orderId}/${endpoint}`), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -241,35 +397,103 @@ const BranchDashboard = () => {
         },
         body: body ? JSON.stringify(body) : undefined,
       });
-      if (!res.ok) throw new Error(await readErrorMessage(res, "Order action failed."));
-      return res.json();
+      if (!res.ok) {
+        throw new Error(await readErrorMessage(res, t("branch_dashboard.error.action_failed")));
+      }
+      return res.text();
     },
-    onSuccess: async (_, variables) => {
+    onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["branch-orders"] }),
         queryClient.invalidateQueries({ queryKey: ["branch-staff"] }),
       ]);
-      if (!variables.silent) {
-        toast.success("Branch workflow updated.");
-      }
+      toast.success(t("branch_dashboard.toast.order_updated"));
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const activeOrders = useMemo(
-    () => orders.filter((order) => !TERMINAL_STATUSES.has(order.status)),
+  const inviteMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(buildApiUrl("/api/branch/staff/invites"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ email: inviteEmail.trim() || undefined }),
+      });
+      if (!res.ok) {
+        throw new Error(await readErrorMessage(res, t("branch_dashboard.error.invite_create")));
+      }
+      return readJsonResponse<RoleInviteLink>(res, "Staff invite response was empty.");
+    },
+    onSuccess: (invite) => {
+      setLatestInvite(invite);
+      setInviteEmail("");
+      toast.success(t("branch_dashboard.toast.invite_created"));
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const stockMutation = useMutation({
+    mutationFn: async (productId: number) => {
+      const res = await fetch(buildApiUrl(`/api/branch/stock/${productId}/out-of-stock`), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        throw new Error(await readErrorMessage(res, t("branch_dashboard.error.stock_update")));
+      }
+      return readJsonResponse<BranchStockItem>(res, "Stock update response was empty.");
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["branch-stock"] });
+      toast.success(t("branch_dashboard.toast.stock_updated"));
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const orders = ordersQuery.data ?? [];
+  const staffMembers = staffQuery.data ?? [];
+  const stock = stockQuery.data ?? [];
+
+  const activeOrders = useMemo(() => orders.filter((order) => !TERMINAL_STATUSES.has(order.status)), [orders]);
+  const pendingOrders = activeOrders.filter((order) => order.status === "Pending").length;
+  const acceptedOrders = activeOrders.filter((order) => order.status === "Accepted" || order.status === "Assigned").length;
+  const preparingOrders = activeOrders.filter((order) => order.status === "Preparing").length;
+  const readyOrders = activeOrders.filter((order) => order.status === "Ready for Pick-up").length;
+  const completedOrders = orders.filter((order) => order.status === "Completed").length;
+  const trackedRevenue = orders.reduce((sum, order) => sum + order.total, 0);
+  const completedRevenue = orders
+    .filter((order) => order.status === "Completed")
+    .reduce((sum, order) => sum + order.total, 0);
+  const averageQueueAge = activeOrders.length
+    ? Math.round(activeOrders.reduce((sum, order) => sum + minutesSince(order.created_at), 0) / activeOrders.length)
+    : 0;
+
+  const sortedOrders = useMemo(
+    () => [...orders].sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime()),
     [orders],
   );
 
-  const readyOrders = useMemo(
-    () => activeOrders.filter((order) => order.status === "Ready for Pick-up"),
-    [activeOrders],
-  );
-
-  const assignableOrders = useMemo(
-    () => activeOrders.filter((order) => order.status === "Pending" || order.status === "Accepted"),
-    [activeOrders],
-  );
+  const filteredOrders = useMemo(() => {
+    return sortedOrders.filter((order) => {
+      if (orderFilter !== "all" && order.status !== orderFilter) return false;
+      if (!deferredOrderSearch) return true;
+      const items = parseItems(order.items);
+      return [
+        String(order.id),
+        order.customer_name || "",
+        order.customer_phone || "",
+        order.assigned_staff || "",
+        order.status,
+        ...items.map((item) => item.name || ""),
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(deferredOrderSearch);
+    });
+  }, [deferredOrderSearch, orderFilter, sortedOrders]);
 
   const staffLoad = useMemo(() => {
     const load = new Map<number, number>();
@@ -281,133 +505,47 @@ const BranchDashboard = () => {
     return load;
   }, [activeOrders]);
 
-  const staffSnapshots = useMemo(() => {
-    const activityBucket = Math.floor(now / 60000);
-    return staffMembers.map((staff) => {
-      const assignedOrders = staffLoad.get(staff.id) || 0;
-      let presence: Presence = assignedOrders > 0 ? "busy" : "idle";
-      if (assignedOrders === 0 && (staff.id * 11 + activityBucket) % 7 === 0) {
-        presence = "offline";
-      }
-      return {
+  const staffRows = useMemo(
+    () =>
+      staffMembers.map((staff) => ({
         ...staff,
-        assignedOrders,
-        presence,
-      };
-    });
-  }, [now, staffLoad, staffMembers]);
+        assignedOrders: staffLoad.get(staff.id) || 0,
+      })),
+    [staffLoad, staffMembers],
+  );
 
-  const overview = useMemo(() => {
-    const pendingCount = activeOrders.filter((order) => order.status === "Pending").length;
-    const activeCount = activeOrders.filter((order) => order.status !== "Ready for Pick-up").length;
-    const prepSamples = orders.filter((order) =>
-      ["Assigned", "Preparing", "Ready for Pick-up", "Completed"].includes(order.status),
-    );
-    const averagePrepMinutes =
-      prepSamples.length > 0
-        ? Math.round(
-            prepSamples.reduce((sum, order) => sum + minutesSince(order.created_at, now), 0) / prepSamples.length,
-          )
-        : 0;
-    return [
-      {
-        label: isManager ? "Pending Orders" : "Assigned to You",
-        value: pendingCount,
-        detail: pendingCount >= 5 ? "High-pressure queue" : "Within target range",
-        icon: Clock3,
-        accent: pendingCount >= 5 || newOrderFlash ? "#fb7185" : "#ff6b00",
-        highlight: pendingCount >= 5 || newOrderFlash,
-      },
-      {
-        label: "Active Orders",
-        value: activeCount,
-        detail: `${activeOrders.length} total live in pipeline`,
-        icon: Sparkles,
-        accent: "#ff9b52",
-      },
-      {
-        label: "Ready for Pickup",
-        value: readyOrders.length,
-        detail: readyOrders.length ? "Customers can be called now" : "No pickups waiting",
-        icon: PackageCheck,
-        accent: "#34d399",
-      },
-      {
-        label: "Average Preparation Time",
-        value: averagePrepMinutes ? formatMinutesLabel(averagePrepMinutes) : "--",
-        detail: "Estimated from live queue age",
-        icon: CheckCircle2,
-        accent: "#facc15",
-      },
-    ];
-  }, [activeOrders, isManager, newOrderFlash, now, orders, readyOrders.length]);
+  const alerts = [
+    pendingOrders >= 4
+      ? {
+          title: "Pending review pressure",
+          detail: `${pendingOrders} orders are still waiting for manager review.`,
+        }
+      : null,
+    readyOrders >= 3
+      ? {
+          title: "Ready orders waiting",
+          detail: `${readyOrders} orders are ready for customer handoff.`,
+        }
+      : null,
+    averageQueueAge >= 25
+      ? {
+          title: "Queue age rising",
+          detail: `Average live queue age is ${formatMinutes(averageQueueAge)}.`,
+        }
+      : null,
+  ].filter(Boolean) as Array<{ title: string; detail: string }>;
 
-  const ordersByColumn = useMemo(() => {
-    const sorted = [...activeOrders].sort(
-      (left, right) => minutesSince(right.created_at, now) - minutesSince(left.created_at, now),
-    );
-    return KANBAN_COLUMNS.map((column) => ({
-      ...column,
-      orders: sorted.filter((order) => column.statuses.includes(order.status as never)),
-    }));
-  }, [activeOrders, now]);
+  const statusRows = [
+    { label: t("branch_dashboard.status.Pending"), value: pendingOrders, color: "bg-amber-500" },
+    { label: t("branch_dashboard.status.Accepted"), value: acceptedOrders, color: "bg-orange-500" },
+    { label: t("branch_dashboard.status.Preparing"), value: preparingOrders, color: "bg-sky-500" },
+    { label: t("branch_dashboard.status.Ready for Pick-up"), value: readyOrders, color: "bg-emerald-500" },
+    { label: t("branch_dashboard.status.Completed"), value: completedOrders, color: "bg-primary" },
+  ];
+  const maxStatusCount = Math.max(...statusRows.map((item) => item.value), 1);
 
-  const alerts = useMemo<AlertItem[]>(() => {
-    const pendingAged = activeOrders.filter(
-      (order) => order.status === "Pending" && minutesSince(order.created_at, now) >= 15,
-    );
-    const readyAged = activeOrders.filter(
-      (order) => order.status === "Ready for Pick-up" && minutesSince(order.created_at, now) >= 20,
-    );
-    const overloadedStaff = staffSnapshots.filter((staff) => staff.assignedOrders >= 3);
-
-    const nextAlerts: AlertItem[] = [];
-
-    if (pendingAged.length) {
-      nextAlerts.push({
-        id: "pending-aged",
-        tone: "danger",
-        title: "Orders waiting too long",
-        detail: `${pendingAged.length} pending order${pendingAged.length > 1 ? "s" : ""} are past the 15-minute review target.`,
-      });
-    }
-
-    if (overloadedStaff.length) {
-      nextAlerts.push({
-        id: "staff-overload",
-        tone: "warn",
-        title: "Overloaded staff detected",
-        detail: `${overloadedStaff.map((staff) => getStaffLabel(staff)).join(", ")} ${overloadedStaff.length > 1 ? "are" : "is"} carrying 3+ active orders.`,
-      });
-    }
-
-    if (readyAged.length) {
-      nextAlerts.push({
-        id: "ready-stale",
-        tone: "info",
-        title: "Ready but not picked",
-        detail: `${readyAged.length} pickup order${readyAged.length > 1 ? "s" : ""} have been waiting 20+ minutes.`,
-      });
-    }
-
-    if (!nextAlerts.length) {
-      nextAlerts.push({
-        id: "stable",
-        tone: "info",
-        title: "Operations stable",
-        detail: "Queue health looks good. Keep pressure on accepted orders and customer handoff.",
-      });
-    }
-
-    return nextAlerts;
-  }, [activeOrders, now, staffSnapshots]);
-
-  const analytics = useMemo(() => {
-    const revenueTracked = orders.reduce((sum, order) => sum + order.total, 0);
-    const completedOrders = orders.filter((order) => order.status === "Completed");
-    const completedRevenue = completedOrders.reduce((sum, order) => sum + order.total, 0);
-    const completionRate = orders.length ? Math.round((completedOrders.length / orders.length) * 100) : 0;
-    const dailyVolume = Array.from({ length: 7 }, (_, index) => {
+  const dailyVolume = useMemo(() => {
+    return Array.from({ length: 7 }, (_, index) => {
       const day = new Date();
       day.setHours(0, 0, 0, 0);
       day.setDate(day.getDate() - (6 - index));
@@ -417,775 +555,807 @@ const BranchDashboard = () => {
         key,
         label: day.toLocaleDateString(undefined, { weekday: "short" }),
         orders: dayOrders.length,
-        revenue: dayOrders.reduce((sum, order) => sum + order.total, 0),
       };
     });
-    const peakDay = [...dailyVolume].sort((left, right) => right.orders - left.orders)[0];
-    return {
-      revenueTracked,
-      completedRevenue,
-      completionRate,
-      dailyVolume,
-      peakDay,
-      delayedOrders: activeOrders.filter((order) => minutesSince(order.created_at, now) >= 20).length,
-      busyStaff: staffSnapshots.filter((staff) => staff.presence === "busy").length,
-    };
-  }, [activeOrders, now, orders, staffSnapshots]);
-
-  useEffect(() => {
-    const currentIds = orders.map((order) => order.id);
-    if (seenOrderIdsRef.current === null) {
-      seenOrderIdsRef.current = currentIds;
-      return;
-    }
-
-    const previousIds = new Set(seenOrderIdsRef.current);
-    const newOrders = orders.filter((order) => !previousIds.has(order.id));
-    if (newOrders.length) {
-      setNewOrderFlash(true);
-      toast.message(`${newOrders.length} new order${newOrders.length > 1 ? "s" : ""} entered the branch queue.`);
-      try {
-        const audioContext = new window.AudioContext();
-        const oscillator = audioContext.createOscillator();
-        const gain = audioContext.createGain();
-        oscillator.type = "sine";
-        oscillator.frequency.value = 720;
-        gain.gain.value = 0.03;
-        oscillator.connect(gain);
-        gain.connect(audioContext.destination);
-        oscillator.start();
-        oscillator.stop(audioContext.currentTime + 0.12);
-      } catch {
-        // Visual alert remains active if audio is blocked by the browser.
-      }
-
-      const flashTimer = window.setTimeout(() => setNewOrderFlash(false), 4000);
-      seenOrderIdsRef.current = currentIds;
-      return () => window.clearTimeout(flashTimer);
-    }
-
-    seenOrderIdsRef.current = currentIds;
   }, [orders]);
+  const maxDailyOrders = Math.max(...dailyVolume.map((day) => day.orders), 1);
 
   const handleRefresh = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["branch-orders"] }),
       queryClient.invalidateQueries({ queryKey: ["branch-staff"] }),
+      queryClient.invalidateQueries({ queryKey: ["branch-stock"] }),
     ]);
-    toast.success("Live queue refreshed.");
+    toast.success("Dashboard refreshed");
   };
 
-  const assignOrderToStaff = async (order: BranchOrder, staffUserId: number) => {
-    if (!isManager) return;
-    if (order.status === "Assigned" || order.status === "Preparing" || order.status === "Ready for Pick-up") {
-      toast.info("Reassignment is only available before preparation starts.");
-      return;
-    }
+  const assignToStaff = async (order: BranchOrder) => {
+    const selectedStaff = Number(staffSelectionByOrder[order.id]);
+    if (!selectedStaff) return;
     if (order.status === "Pending") {
-      await orderAction.mutateAsync({ orderId: order.id, endpoint: "accept", silent: true });
+      await orderAction.mutateAsync({ orderId: order.id, endpoint: "accept" });
     }
     await orderAction.mutateAsync({
       orderId: order.id,
       endpoint: "assign",
-      body: { staff_user_id: staffUserId },
+      body: { staff_user_id: selectedStaff },
     });
+    setStaffSelectionByOrder((current) => ({ ...current, [order.id]: "" }));
   };
 
-  const moveOrderToColumn = async (order: BranchOrder, columnId: string) => {
-    if (columnId === getColumnForStatus(order.status)) return;
-
-    if (isManager) {
-      if (columnId === "assigning" && order.status === "Pending") {
-        await orderAction.mutateAsync({ orderId: order.id, endpoint: "accept" });
-        return;
-      }
-      if (columnId === "ready" && order.status === "Ready for Pick-up") {
-        await orderAction.mutateAsync({ orderId: order.id, endpoint: "complete" });
-        return;
-      }
-      toast.info("This move needs staff action or a supported manager transition.");
-      return;
-    }
-
-    if (columnId === "preparing" && order.status === "Assigned") {
-      await orderAction.mutateAsync({ orderId: order.id, endpoint: "start" });
-      return;
-    }
-    if (columnId === "ready" && order.status === "Preparing") {
-      await orderAction.mutateAsync({ orderId: order.id, endpoint: "ready" });
-      return;
-    }
-    toast.info("This lane change is not available for your role.");
+  const copyInviteLink = async () => {
+    if (!latestInvite?.invite_url) return;
+    await navigator.clipboard.writeText(latestInvite.invite_url);
+    toast.success(t("branch_dashboard.toast.invite_copied"));
   };
-
-  const actionableAlerts = alerts.filter((alert) => alert.id !== "stable");
-  const pendingAttentionCount = actionableAlerts.length;
 
   return (
-    <div
-      className="min-h-screen bg-[#0f172a] text-white"
-      style={{ fontFamily: "Poppins, DM Sans, sans-serif" }}
-    >
+    <div className="min-h-screen bg-[#f8f7f4] text-foreground dark:bg-background">
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
-        <div className="absolute left-[-12%] top-[-8%] h-72 w-72 rounded-full bg-[#ff6b00]/20 blur-3xl" />
-        <div className="absolute right-[-8%] top-[10%] h-96 w-96 rounded-full bg-cyan-400/10 blur-3xl" />
-        <div className="absolute bottom-[-10%] left-[28%] h-80 w-80 rounded-full bg-amber-300/10 blur-3xl" />
+        <div className="absolute -left-24 top-0 h-72 w-72 rounded-full bg-primary/10 blur-3xl" />
+        <div className="absolute right-0 top-20 h-80 w-80 rounded-full bg-orange-500/8 blur-3xl" />
       </div>
 
-      <main className="relative mx-auto max-w-[1700px] px-4 pb-28 pt-6 sm:px-6 xl:px-8">
-        <motion.header
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="rounded-[32px] border border-white/10 bg-white/8 p-6 shadow-[0_30px_120px_rgba(2,6,23,0.45)] backdrop-blur-2xl"
-        >
-          <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.28em] text-white/60">
-                <span className="rounded-full border border-white/10 bg-white/6 px-3 py-1">Simba Supermarket Rwanda</span>
-                <span className="rounded-full border border-[#ff6b00]/30 bg-[#ff6b00]/10 px-3 py-1 text-[#ffb57d]">
-                  {branchName}
-                </span>
-                <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-emerald-200">
-                  Live refresh every 5s
-                </span>
-              </div>
-              <div>
-                <h1 className="text-3xl font-black tracking-[-0.04em] text-white sm:text-4xl">
-                  {isManager ? "Branch Manager Control Center" : "Branch Fulfillment Control Center"}
-                </h1>
-                <p className="mt-3 max-w-3xl text-sm text-slate-300 sm:text-base">
-                  High-speed branch operations for pickup orders. Scan queue pressure, assign staff fast, and move every order from pending to customer handoff without losing tempo.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-3 xl:min-w-[540px]">
-              <div className="rounded-[24px] border border-white/10 bg-slate-950/45 p-4">
-                <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Signed in as</p>
-                <p className="mt-3 text-base font-semibold text-white">{currentUserLabel}</p>
-                <p className="mt-1 text-sm text-[#ffb57d]">{isManager ? "Branch Manager" : "Branch Staff"}</p>
-              </div>
-              <div className="rounded-[24px] border border-white/10 bg-slate-950/45 p-4">
-                <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Queue Pressure</p>
-                <p className="mt-3 text-3xl font-black text-white">{activeOrders.length}</p>
-                <p className="mt-1 text-sm text-slate-300">Orders currently under branch control</p>
-              </div>
+      <div
+        className="relative flex min-h-screen"
+        style={{ "--sidebar-width": sidebarVisible ? `${sidebarWidth}px` : "0px" } as CSSProperties}
+      >
+        {sidebarVisible ? (
+          <aside
+            className="fixed inset-y-0 left-0 z-40 hidden border-r border-border bg-card shadow-sm lg:block"
+            style={{ width: sidebarWidth, minWidth: sidebarWidth, maxWidth: sidebarWidth }}
+          >
+            <div className="relative h-full">
+              <SidebarContent
+                items={sidebarItems}
+                branchName={branchName}
+                currentUserLabel={currentUserLabel}
+                isManager={isManager}
+                activeSection={activeSection}
+                onSelect={setActiveSection}
+                onClose={() => setSidebarVisible(false)}
+              />
               <div
-                className={cn(
-                  "rounded-[24px] border p-4 transition-all",
-                  pendingAttentionCount
-                    ? "border-rose-400/30 bg-rose-500/10 shadow-[0_0_0_1px_rgba(251,113,133,0.12)]"
-                    : "border-white/10 bg-slate-950/45",
-                )}
-              >
-                <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Smart Alerts</p>
-                <p className="mt-3 text-3xl font-black text-white">{actionableAlerts.length}</p>
-                <p className="mt-1 text-sm text-slate-300">
-                  {pendingAttentionCount ? "Action recommended now" : "No urgent disruption detected"}
-                </p>
-              </div>
+                role="separator"
+                aria-orientation="vertical"
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  setIsResizingSidebar(true);
+                }}
+                className="absolute right-0 top-0 h-full w-1 cursor-col-resize bg-transparent transition-colors hover:bg-primary/30"
+              />
             </div>
-          </div>
-        </motion.header>
+          </aside>
+        ) : null}
 
-        <section className="mt-6 grid gap-4 lg:grid-cols-2 2xl:grid-cols-4">
-          {overview.map((card, index) => {
-            const Icon = card.icon;
-            return (
-              <motion.div
-                key={card.label}
-                initial={{ opacity: 0, y: 24 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.05 }}
-                className={cn(
-                  "relative overflow-hidden rounded-[28px] border border-white/10 bg-white/8 p-6 backdrop-blur-2xl",
-                  card.highlight && "shadow-[0_0_0_1px_rgba(255,107,0,0.18),0_30px_110px_rgba(249,115,22,0.22)]",
-                )}
-              >
-                <div
-                  className="absolute inset-x-0 top-0 h-1"
-                  style={{ background: `linear-gradient(90deg, ${card.accent}, transparent)` }}
-                />
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">{card.label}</p>
-                    <div className="mt-4 flex items-end gap-3">
-                      <p className="text-4xl font-black tracking-[-0.05em] text-white">{card.value}</p>
-                      {card.highlight && (
-                        <span className="rounded-full border border-rose-400/30 bg-rose-500/12 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-rose-200">
-                          Escalated
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-3 text-sm text-slate-300">{card.detail}</p>
-                  </div>
-                  <div
-                    className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10"
-                    style={{ backgroundColor: `${card.accent}1A`, color: card.accent }}
-                  >
-                    <Icon className="h-6 w-6" />
-                  </div>
-                </div>
-              </motion.div>
-            );
-          })}
-        </section>
-
-        <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="space-y-6">
-            <div className="rounded-[30px] border border-white/10 bg-white/8 p-5 backdrop-blur-2xl">
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-                <div>
-                  <p className="text-[11px] uppercase tracking-[0.28em] text-[#ffb57d]">Kanban Pipeline</p>
-                  <h2 className="mt-2 text-2xl font-black tracking-[-0.03em] text-white">Order Flow Command Board</h2>
-                  <p className="mt-2 text-sm text-slate-300">
-                    Drag orders across supported stages, or drop them on staff cards for fast assignment.
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
-                  <span className="rounded-full border border-white/10 bg-slate-950/45 px-3 py-1.5">
-                    {draggingOrderId ? `Dragging order #${draggingOrderId}` : "Drag enabled for active orders"}
-                  </span>
-                  <span className="rounded-full border border-white/10 bg-slate-950/45 px-3 py-1.5">
-                    {ordersRefreshing ? "Syncing live queue..." : "Queue synced"}
-                  </span>
-                </div>
-              </div>
-
-              <div className="mt-5 grid gap-4 2xl:grid-cols-4">
-                {ordersByColumn.map((column, columnIndex) => (
-                  <motion.section
-                    key={column.id}
-                    initial={{ opacity: 0, y: 28 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: columnIndex * 0.06 }}
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      setHoveredColumn(column.id);
-                    }}
-                    onDragLeave={() => setHoveredColumn((value) => (value === column.id ? null : value))}
-                    onDrop={async (event) => {
-                      event.preventDefault();
-                      setHoveredColumn(null);
-                      const orderId = Number(event.dataTransfer.getData("text/plain") || draggingOrderId);
-                      const order = activeOrders.find((item) => item.id === orderId);
-                      if (!order) return;
-                      await moveOrderToColumn(order, column.id);
-                      setDraggingOrderId(null);
-                    }}
-                    className={cn(
-                      "flex min-h-[620px] flex-col rounded-[26px] border border-white/10 bg-slate-950/45 p-4 transition-all",
-                      hoveredColumn === column.id && "border-[#ff6b00]/45 bg-[#ff6b00]/10",
-                    )}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: column.accent }} />
-                          <h3 className="text-base font-bold text-white">{column.title}</h3>
-                        </div>
-                        <p className="mt-2 text-sm text-slate-400">{column.description}</p>
-                      </div>
-                      <div
-                        className="rounded-2xl border border-white/10 px-3 py-2 text-center"
-                        style={{ backgroundColor: `${column.accent}12` }}
-                      >
-                        <p className="text-2xl font-black text-white">{column.orders.length}</p>
-                        <p className="text-[10px] uppercase tracking-[0.22em] text-slate-400">Orders</p>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 flex-1 space-y-3">
-                      <AnimatePresence initial={false}>
-                        {column.orders.map((order) => {
-                          const items = parseItems(order.items);
-                          const ageMinutes = minutesSince(order.created_at, now);
-                          const urgency = getUrgencyClasses(ageMinutes);
-                          const selectionValue = staffSelectionByOrder[order.id] || "";
-                          return (
-                            <motion.article
-                              key={order.id}
-                              layout
-                              initial={{ opacity: 0, scale: 0.98 }}
-                              animate={{ opacity: 1, scale: 1 }}
-                              exit={{ opacity: 0, scale: 0.98 }}
-                              draggable={!TERMINAL_STATUSES.has(order.status)}
-                              onDragStart={(event) => {
-                                setDraggingOrderId(order.id);
-                                event.dataTransfer.setData("text/plain", String(order.id));
-                              }}
-                              onDragEnd={() => {
-                                setDraggingOrderId(null);
-                                setHoveredColumn(null);
-                                setHoveredStaffId(null);
-                              }}
-                              className={cn(
-                                "rounded-[24px] border bg-white/8 p-4 shadow-[0_18px_60px_rgba(15,23,42,0.32)] backdrop-blur-xl transition-all hover:-translate-y-0.5",
-                                urgency.card,
-                                draggingOrderId === order.id && "rotate-[0.5deg] opacity-85",
-                              )}
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div>
-                                  <p className="text-lg font-bold text-white">
-                                    {order.customer_name || "Customer"}
-                                  </p>
-                                  <p className="mt-1 text-sm text-slate-400">Order #{order.id}</p>
-                                </div>
-                                <div className="flex flex-col items-end gap-2">
-                                  <span className={cn("rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em]", urgency.pill)}>
-                                    {urgency.label}
-                                  </span>
-                                  <span className="text-sm font-semibold text-white">{formatPrice(order.total)}</span>
-                                </div>
-                              </div>
-
-                              <div className="mt-4 flex items-center gap-2 text-sm text-slate-300">
-                                <span className={cn("h-2.5 w-2.5 rounded-full", urgency.dot)} />
-                                <span>{formatSincePlaced(ageMinutes)}</span>
-                                <span className="text-slate-500">•</span>
-                                <span>{items.length} item{items.length === 1 ? "" : "s"}</span>
-                              </div>
-
-                              <div className="mt-4 space-y-2 rounded-[20px] border border-white/10 bg-slate-950/40 p-3">
-                                {items.slice(0, 3).map((item, itemIndex) => (
-                                  <div key={`${order.id}-${item.id ?? itemIndex}`} className="flex items-center justify-between gap-3 text-sm text-slate-300">
-                                    <span className="truncate">{item.name || "Product item"}</span>
-                                    <span className="rounded-full bg-white/8 px-2 py-0.5 text-xs text-white/80">
-                                      x{item.quantity || 1}
-                                    </span>
-                                  </div>
-                                ))}
-                                {items.length > 3 && (
-                                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                    +{items.length - 3} more items
-                                  </p>
-                                )}
-                              </div>
-
-                              <div className="mt-4 flex flex-wrap items-center gap-2">
-                                <span className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-xs font-medium text-slate-200">
-                                  {order.assigned_staff ? `Assigned: ${order.assigned_staff}` : "Unassigned"}
-                                </span>
-                                {order.pickup_time && (
-                                  <span className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-xs font-medium text-slate-300">
-                                    Pickup {order.pickup_time}
-                                  </span>
-                                )}
-                              </div>
-
-                              <div className="mt-4 space-y-3">
-                                {isManager && order.status === "Pending" && (
-                                  <button
-                                    type="button"
-                                    onClick={() => orderAction.mutate({ orderId: order.id, endpoint: "accept" })}
-                                    className="w-full rounded-2xl bg-[#ff6b00] px-4 py-3 text-sm font-bold text-white transition-all hover:bg-[#ff7d1f]"
-                                  >
-                                    Accept Order
-                                  </button>
-                                )}
-
-                                {isManager && (order.status === "Pending" || order.status === "Accepted") && (
-                                  <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                                    <select
-                                      value={selectionValue}
-                                      onChange={(event) =>
-                                        setStaffSelectionByOrder((current) => ({
-                                          ...current,
-                                          [order.id]: event.target.value,
-                                        }))
-                                      }
-                                      className="h-11 rounded-2xl border border-white/10 bg-slate-950/65 px-3 text-sm text-white outline-none"
-                                    >
-                                      <option value="">Assign staff</option>
-                                      {staffMembers.map((staff) => (
-                                        <option key={staff.id} value={String(staff.id)} className="bg-slate-950">
-                                          {getStaffLabel(staff)}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <button
-                                      type="button"
-                                      disabled={!selectionValue}
-                                      onClick={async () => {
-                                        await assignOrderToStaff(order, Number(selectionValue));
-                                        setStaffSelectionByOrder((current) => ({ ...current, [order.id]: "" }));
-                                      }}
-                                      className="rounded-2xl border border-[#ff6b00]/30 bg-[#ff6b00]/12 px-4 py-3 text-sm font-bold text-[#ffb57d] transition-all hover:bg-[#ff6b00] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                                    >
-                                      Assign Staff
-                                    </button>
-                                  </div>
-                                )}
-
-                                {!isManager && order.status === "Assigned" && (
-                                  <button
-                                    type="button"
-                                    onClick={() => orderAction.mutate({ orderId: order.id, endpoint: "start" })}
-                                    className="w-full rounded-2xl border border-amber-400/30 bg-amber-400/12 px-4 py-3 text-sm font-bold text-amber-100 transition-all hover:bg-amber-400 hover:text-slate-950"
-                                  >
-                                    Start Preparing
-                                  </button>
-                                )}
-
-                                {!isManager && order.status === "Preparing" && (
-                                  <button
-                                    type="button"
-                                    onClick={() => orderAction.mutate({ orderId: order.id, endpoint: "ready" })}
-                                    className="w-full rounded-2xl border border-emerald-400/30 bg-emerald-400/12 px-4 py-3 text-sm font-bold text-emerald-100 transition-all hover:bg-emerald-400 hover:text-slate-950"
-                                  >
-                                    Mark as Ready
-                                  </button>
-                                )}
-
-                                {isManager && order.status === "Ready for Pick-up" && (
-                                  <button
-                                    type="button"
-                                    onClick={() => orderAction.mutate({ orderId: order.id, endpoint: "complete" })}
-                                    className="w-full rounded-2xl border border-emerald-400/30 bg-emerald-400/12 px-4 py-3 text-sm font-bold text-emerald-100 transition-all hover:bg-emerald-400 hover:text-slate-950"
-                                  >
-                                    Confirm Pickup
-                                  </button>
-                                )}
-
-                                {isManager && order.status === "Preparing" && (
-                                  <div className="rounded-2xl border border-white/10 bg-white/6 px-3 py-3 text-sm text-slate-300">
-                                    Staff is preparing this order. It will move to pickup once the branch team marks it ready.
-                                  </div>
-                                )}
-                              </div>
-                            </motion.article>
-                          );
-                        })}
-                      </AnimatePresence>
-
-                      {!column.orders.length && (
-                        <div className="flex h-full min-h-[180px] items-center justify-center rounded-[24px] border border-dashed border-white/10 bg-white/[0.03] p-6 text-center text-sm text-slate-500">
-                          Drop an eligible order here or wait for live queue updates.
-                        </div>
-                      )}
-                    </div>
-                  </motion.section>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-6 xl:sticky xl:top-6 xl:h-fit">
-            <section className="rounded-[30px] border border-white/10 bg-white/8 p-5 backdrop-blur-2xl">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-[11px] uppercase tracking-[0.28em] text-[#ffb57d]">Staff Management</p>
-                  <h2 className="mt-2 text-2xl font-black tracking-[-0.03em] text-white">Branch Team Load</h2>
-                </div>
-                <Users className="h-6 w-6 text-[#ffb57d]" />
-              </div>
-
-              <div className="mt-4 space-y-3">
-                {staffSnapshots.map((staff) => {
-                  const statusClasses =
-                    staff.presence === "busy"
-                      ? "border-amber-400/30 bg-amber-400/12 text-amber-100"
-                      : staff.presence === "offline"
-                        ? "border-slate-600/40 bg-slate-700/25 text-slate-300"
-                        : "border-emerald-400/30 bg-emerald-400/12 text-emerald-100";
-
-                  return (
-                    <div
-                      key={staff.id}
-                      onDragOver={(event) => {
-                        if (!isManager) return;
-                        event.preventDefault();
-                        setHoveredStaffId(staff.id);
-                      }}
-                      onDragLeave={() => setHoveredStaffId((value) => (value === staff.id ? null : value))}
-                      onDrop={async (event) => {
-                        if (!isManager) return;
-                        event.preventDefault();
-                        setHoveredStaffId(null);
-                        const orderId = Number(event.dataTransfer.getData("text/plain") || draggingOrderId);
-                        const order = activeOrders.find((item) => item.id === orderId);
-                        if (!order) return;
-                        await assignOrderToStaff(order, staff.id);
-                        setDraggingOrderId(null);
-                      }}
-                      className={cn(
-                        "rounded-[24px] border border-white/10 bg-slate-950/45 p-4 transition-all",
-                        hoveredStaffId === staff.id && "border-[#ff6b00]/45 bg-[#ff6b00]/10",
-                      )}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-3">
-                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/6">
-                            <UserRound className="h-5 w-5 text-slate-200" />
-                          </div>
-                          <div>
-                            <p className="text-sm font-semibold text-white">{getStaffLabel(staff)}</p>
-                            <p className="mt-1 text-xs text-slate-400">{staff.email}</p>
-                          </div>
-                        </div>
-                        <span className={cn("rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em]", statusClasses)}>
-                          {staff.presence}
-                        </span>
-                      </div>
-
-                      <div className="mt-4 grid grid-cols-2 gap-3">
-                        <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                          <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Assigned</p>
-                          <p className="mt-2 text-2xl font-black text-white">{staff.assignedOrders}</p>
-                        </div>
-                        <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                          <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Capacity</p>
-                          <p className="mt-2 text-sm font-semibold text-slate-200">
-                            {staff.assignedOrders >= 3 ? "Overloaded" : staff.assignedOrders > 0 ? "Active" : "Open"}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-
-                {!staffSnapshots.length && (
-                  <div className="rounded-[24px] border border-dashed border-white/10 bg-white/[0.03] p-6 text-center text-sm text-slate-500">
-                    No staff accounts are attached to this branch yet.
-                  </div>
-                )}
-              </div>
-            </section>
-
-            <section className="rounded-[30px] border border-white/10 bg-white/8 p-5 backdrop-blur-2xl">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-[11px] uppercase tracking-[0.28em] text-[#ffb57d]">Smart Alerts</p>
-                  <h2 className="mt-2 text-2xl font-black tracking-[-0.03em] text-white">Queue Signals</h2>
-                </div>
-                <BellRing className="h-6 w-6 text-[#ffb57d]" />
-              </div>
-
-              <div className="mt-4 space-y-3">
-                {alerts.map((alert) => {
-                  const toneClasses =
-                    alert.tone === "danger"
-                      ? "border-rose-500/30 bg-rose-500/10"
-                      : alert.tone === "warn"
-                        ? "border-amber-400/30 bg-amber-400/10"
-                        : "border-cyan-400/20 bg-cyan-400/10";
-                  return (
-                    <div key={alert.id} className={cn("rounded-[24px] border p-4", toneClasses)}>
-                      <div className="flex items-start gap-3">
-                        <AlertTriangle className="mt-0.5 h-5 w-5 text-white" />
-                        <div>
-                          <p className="text-sm font-semibold text-white">{alert.title}</p>
-                          <p className="mt-1 text-sm text-slate-200">{alert.detail}</p>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-
-            <section
-              ref={quickAssignRef}
-              className="rounded-[30px] border border-white/10 bg-white/8 p-5 backdrop-blur-2xl"
+        <AnimatePresence>
+          {mobileSidebarOpen ? (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex lg:hidden"
             >
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-[11px] uppercase tracking-[0.28em] text-[#ffb57d]">
-                    {isManager ? "Quick Assign" : "Team Notes"}
-                  </p>
-                  <h2 className="mt-2 text-2xl font-black tracking-[-0.03em] text-white">
-                    {isManager ? "Fast Dispatch" : "Execution Focus"}
-                  </h2>
-                </div>
-                <ArrowUpRight className="h-6 w-6 text-[#ffb57d]" />
-              </div>
-
-              {isManager ? (
-                <div className="mt-4 space-y-3">
-                  <select
-                    value={quickAssignOrderId}
-                    onChange={(event) => setQuickAssignOrderId(event.target.value)}
-                    className="h-12 w-full rounded-2xl border border-white/10 bg-slate-950/65 px-3 text-sm text-white outline-none"
-                  >
-                    <option value="">Choose order</option>
-                    {assignableOrders.map((order) => (
-                      <option key={order.id} value={String(order.id)} className="bg-slate-950">
-                        #{order.id} • {order.customer_name || "Customer"} • {order.status}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    value={quickAssignStaffId}
-                    onChange={(event) => setQuickAssignStaffId(event.target.value)}
-                    className="h-12 w-full rounded-2xl border border-white/10 bg-slate-950/65 px-3 text-sm text-white outline-none"
-                  >
-                    <option value="">Choose staff</option>
-                    {staffMembers.map((staff) => (
-                      <option key={staff.id} value={String(staff.id)} className="bg-slate-950">
-                        {getStaffLabel(staff)}
-                      </option>
-                    ))}
-                  </select>
+              <button
+                type="button"
+                aria-label="Close sidebar"
+                className="flex-1 bg-black/45"
+                onClick={() => setMobileSidebarOpen(false)}
+              />
+              <motion.aside
+                initial={{ x: -24, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                exit={{ x: -24, opacity: 0 }}
+                transition={{ duration: 0.18 }}
+                className="w-[290px] border-r border-border bg-card shadow-2xl sm:w-80"
+              >
+                <div className="flex items-center justify-end px-4 py-4">
                   <button
                     type="button"
-                    disabled={!quickAssignOrderId || !quickAssignStaffId}
-                    onClick={async () => {
-                      const order = activeOrders.find((item) => item.id === Number(quickAssignOrderId));
-                      if (!order) return;
-                      await assignOrderToStaff(order, Number(quickAssignStaffId));
-                      setQuickAssignOrderId("");
-                      setQuickAssignStaffId("");
-                    }}
-                    className="w-full rounded-2xl bg-[#ff6b00] px-4 py-3 text-sm font-bold text-white transition-all hover:bg-[#ff7d1f] disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => setMobileSidebarOpen(false)}
+                    className="rounded-2xl border border-border p-2 text-muted-foreground"
                   >
-                    Assign Now
+                    <X className="h-4 w-4" />
                   </button>
                 </div>
-              ) : (
-                <div className="mt-4 space-y-3">
-                  <div className="rounded-[24px] border border-white/10 bg-slate-950/45 p-4 text-sm text-slate-300">
-                    Pull assigned orders into preparation immediately, keep pickup bags staged by customer name, and use the ready action the moment handoff is possible.
-                  </div>
-                  <div className="rounded-[24px] border border-white/10 bg-slate-950/45 p-4 text-sm text-slate-300">
-                    If you see a customer waiting on-site, prioritize the oldest ready order first and notify the manager after pickup completion.
-                  </div>
-                </div>
-              )}
-            </section>
-          </div>
-        </section>
-      </main>
+                <SidebarContent
+                  items={sidebarItems}
+                  branchName={branchName}
+                  currentUserLabel={currentUserLabel}
+                  isManager={isManager}
+                  activeSection={activeSection}
+                  onSelect={setActiveSection}
+                  onNavigate={() => setMobileSidebarOpen(false)}
+                  onClose={() => setMobileSidebarOpen(false)}
+                />
+              </motion.aside>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
 
-      <div className="fixed bottom-5 right-5 z-30">
-        <div className="flex flex-col gap-3 rounded-[28px] border border-white/10 bg-slate-950/80 p-3 shadow-[0_24px_80px_rgba(2,6,23,0.55)] backdrop-blur-2xl">
-          {isManager && (
-            <button
-              type="button"
-              onClick={() => quickAssignRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })}
-              className="flex items-center gap-3 rounded-2xl bg-white/6 px-4 py-3 text-left text-sm font-semibold text-white transition-all hover:bg-white/10"
-            >
-              <Users className="h-4 w-4 text-[#ffb57d]" />
-              <span>Assign staff quickly</span>
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={handleRefresh}
-            className="flex items-center gap-3 rounded-2xl bg-white/6 px-4 py-3 text-left text-sm font-semibold text-white transition-all hover:bg-white/10"
-          >
-            <RefreshCcw className={cn("h-4 w-4 text-[#ffb57d]", ordersRefreshing && "animate-spin")} />
-            <span>Refresh orders</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => toast.success("Staff notification dispatched to the branch channel.")}
-            className="flex items-center gap-3 rounded-2xl bg-white/6 px-4 py-3 text-left text-sm font-semibold text-white transition-all hover:bg-white/10"
-          >
-            <BellRing className="h-4 w-4 text-[#ffb57d]" />
-            <span>Notify staff</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setAnalyticsOpen(true)}
-            className="flex items-center gap-3 rounded-2xl bg-[#ff6b00] px-4 py-3 text-left text-sm font-semibold text-white transition-all hover:bg-[#ff7d1f]"
-          >
-            <Sparkles className="h-4 w-4" />
-            <span>View analytics</span>
-          </button>
-        </div>
-      </div>
-
-      <Dialog open={analyticsOpen} onOpenChange={setAnalyticsOpen}>
-        <DialogContent className="max-w-4xl border-white/10 bg-[#111827] p-0 text-white shadow-[0_30px_120px_rgba(0,0,0,0.55)]">
-          <DialogHeader className="border-b border-white/10 px-6 py-5">
-            <DialogTitle className="text-2xl font-black tracking-[-0.03em] text-white">Branch analytics snapshot</DialogTitle>
-            <DialogDescription className="text-slate-400">
-              Live operational readout for the current branch queue and pickup throughput.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="grid gap-6 px-6 py-6 lg:grid-cols-[0.92fr_1.08fr]">
-            <div className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
-                  <p className="text-[11px] uppercase tracking-[0.26em] text-slate-400">Revenue Tracked</p>
-                  <p className="mt-3 text-2xl font-black text-white">{formatPrice(analytics.revenueTracked)}</p>
-                  <p className="mt-1 text-sm text-slate-400">All branch orders in current dataset</p>
-                </div>
-                <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
-                  <p className="text-[11px] uppercase tracking-[0.26em] text-slate-400">Completed Revenue</p>
-                  <p className="mt-3 text-2xl font-black text-white">{formatPrice(analytics.completedRevenue)}</p>
-                  <p className="mt-1 text-sm text-slate-400">Confirmed customer pickups</p>
-                </div>
-                <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
-                  <p className="text-[11px] uppercase tracking-[0.26em] text-slate-400">Completion Rate</p>
-                  <p className="mt-3 text-2xl font-black text-white">{analytics.completionRate}%</p>
-                  <p className="mt-1 text-sm text-slate-400">Orders fully handed off to customers</p>
-                </div>
-                <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
-                  <p className="text-[11px] uppercase tracking-[0.26em] text-slate-400">Delayed Orders</p>
-                  <p className="mt-3 text-2xl font-black text-white">{analytics.delayedOrders}</p>
-                  <p className="mt-1 text-sm text-slate-400">Orders older than 20 minutes in live queue</p>
-                </div>
-              </div>
-
-              <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
-                <p className="text-[11px] uppercase tracking-[0.26em] text-slate-400">Peak Day</p>
-                <div className="mt-3 flex items-end justify-between gap-3">
-                  <div>
-                    <p className="text-2xl font-black text-white">{analytics.peakDay?.label || "--"}</p>
-                    <p className="mt-1 text-sm text-slate-400">
-                      {analytics.peakDay?.orders || 0} orders · {formatPrice(analytics.peakDay?.revenue || 0)}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3 text-right">
-                    <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Busy Staff</p>
-                    <p className="mt-1 text-xl font-black text-white">{analytics.busyStaff}</p>
-                  </div>
+        <main className="min-w-0 flex-1 lg:pl-[var(--sidebar-width)] lg:transition-[padding-left]">
+          <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
+            <div className="mb-6 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setSidebarVisible(true);
+                  setMobileSidebarOpen(true);
+                }}
+                className="inline-flex max-w-[220px] items-center gap-2 rounded-full border border-border bg-card px-3 py-2 text-left text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-muted"
+              >
+                <UserRound className="h-4 w-4 shrink-0 text-primary" />
+                <span className="truncate">{currentUserLabel}</span>
+              </button>
+              <div className="min-w-0 text-right">
+                <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-primary">{t("branch_dashboard.kicker")}</p>
+                <div className="mt-1 flex flex-wrap items-center justify-end gap-2">
+                  <p className="text-lg font-black text-foreground">{branchName}</p>
+                  <span className="rounded-full border border-border bg-card px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+                    {activeSidebarItem?.label || "Overview"}
+                  </span>
                 </div>
               </div>
             </div>
 
-            <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-[11px] uppercase tracking-[0.26em] text-[#ffb57d]">7-Day Trend</p>
-                  <h3 className="mt-2 text-xl font-black text-white">Daily order volume</h3>
+            <motion.section
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="w-full max-w-xl rounded-[18px] border border-border bg-card px-4 py-3 shadow-sm sm:px-5 sm:py-4"
+            >
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-primary">{t("branch_dashboard.kicker")}</p>
+                  <h1 className="mt-2 text-xl font-black tracking-tight text-foreground sm:text-2xl">
+                    {isManager ? t("branch_dashboard.manager_title") : t("branch_dashboard.staff_title")}
+                  </h1>
+                  <p className="mt-2 max-w-xl text-sm text-muted-foreground">
+                    {isManager
+                      ? "A branch control workspace arranged around fast review, assignment, execution, and pickup completion."
+                      : "A focused staff workspace for preparation and ready-for-pickup execution."}
+                  </p>
                 </div>
-                <span className="rounded-full border border-white/10 bg-slate-950/60 px-3 py-1 text-xs text-slate-300">
-                  Live rolling window
-                </span>
-              </div>
 
-              <div className="mt-6 grid h-[260px] grid-cols-7 items-end gap-3">
-                {analytics.dailyVolume.map((day) => {
-                  const maxOrders = Math.max(...analytics.dailyVolume.map((entry) => entry.orders), 1);
-                  const height = Math.max(12, Math.round((day.orders / maxOrders) * 100));
-                  return (
-                    <div key={day.key} className="flex h-full flex-col items-center justify-end gap-3">
-                      <div className="text-xs font-semibold text-slate-400">{day.orders}</div>
-                      <div className="flex h-full w-full items-end">
-                        <div
-                          className="w-full rounded-t-[18px] bg-gradient-to-t from-[#ff6b00] to-[#ffb44d] shadow-[0_18px_50px_rgba(249,115,22,0.25)]"
-                          style={{ height: `${height}%` }}
+                <div className="grid gap-3 sm:grid-cols-2 lg:w-full lg:max-w-xs">
+                  <div className="rounded-[18px] border border-border bg-background p-3">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-muted-foreground">{t("branch_dashboard.signed_in_as")}</p>
+                    <p className="mt-2 truncate text-sm font-semibold text-foreground">{currentUserLabel}</p>
+                    <p className="mt-1 truncate text-sm text-primary">{branchName}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRefresh}
+                    className="inline-flex items-center justify-center gap-3 rounded-[18px] border border-primary/20 bg-primary px-4 py-3 text-sm font-bold text-primary-foreground shadow-sm transition-opacity hover:opacity-95"
+                  >
+                    <RefreshCcw className={cn("h-4 w-4", ordersQuery.isFetching && "animate-spin")} />
+                    Refresh workspace
+                  </button>
+                </div>
+              </div>
+            </motion.section>
+
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activeSection}
+                initial={{ opacity: 0, y: 18 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -12 }}
+                transition={{ duration: 0.22 }}
+                className="mt-6"
+              >
+                {activeSection === "overview" && (
+                  <div className="space-y-6">
+                    <motion.section
+                      initial="hidden"
+                      animate="show"
+                      variants={{ hidden: {}, show: { transition: { staggerChildren: 0.06 } } }}
+                      className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-4"
+                    >
+                      {[
+                        {
+                          label: isManager ? t("branch_dashboard.summary.pending_review") : t("branch_dashboard.summary.assigned_to_you"),
+                          value: isManager ? pendingOrders : activeOrders.filter((order) => order.assigned_staff_user_id === user?.id).length,
+                          detail: isManager ? "Orders waiting for manager action" : "Orders currently under your execution",
+                          icon: Clock3,
+                        },
+                        {
+                          label: t("branch_dashboard.summary.preparing"),
+                          value: preparingOrders,
+                          detail: "Orders currently being assembled",
+                          icon: ClipboardList,
+                        },
+                        {
+                          label: t("branch_dashboard.summary.ready"),
+                          value: readyOrders,
+                          detail: "Orders ready for customer handoff",
+                          icon: PackageCheck,
+                        },
+                        {
+                          label: t("branch_dashboard.summary.branch_staff"),
+                          value: staffMembers.length,
+                          detail: averageQueueAge ? `Average live queue age ${formatMinutes(averageQueueAge)}` : "No live queue right now",
+                          icon: Users,
+                        },
+                      ].map((card) => (
+                        <motion.div key={card.label} variants={{ hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0 } }}>
+                          <StatCard {...card} />
+                        </motion.div>
+                      ))}
+                    </motion.section>
+
+                    <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(300px,0.9fr)]">
+                      <SectionShell
+                        id="overview"
+                        title="Branch snapshot"
+                        description="A compact operational summary for the current branch queue."
+                      >
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <div className="rounded-[24px] border border-border bg-background p-5">
+                            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-primary">Tracked revenue</p>
+                            <p className="mt-3 text-3xl font-black tracking-tight text-foreground">{formatPrice(trackedRevenue)}</p>
+                            <p className="mt-2 text-sm text-muted-foreground">{completedOrders} completed pickups in this dataset</p>
+                          </div>
+                          <div className="rounded-[24px] border border-border bg-background p-5">
+                            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-primary">Live queue</p>
+                            <p className="mt-3 text-3xl font-black tracking-tight text-foreground">{activeOrders.length}</p>
+                            <p className="mt-2 text-sm text-muted-foreground">{staffRows.filter((staff) => staff.assignedOrders > 0).length} staff carrying active work</p>
+                          </div>
+                        </div>
+                      </SectionShell>
+
+                      <SectionShell
+                        id="alerts"
+                        title="Queue signals"
+                        description="Actionable alerts only, so the panel stays useful instead of noisy."
+                      >
+                        <div className="space-y-3">
+                          {alerts.length ? (
+                            alerts.map((alert, index) => (
+                              <motion.div
+                                key={alert.title}
+                                initial={{ opacity: 0, x: 12 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                transition={{ delay: index * 0.05 }}
+                                className="rounded-[24px] border border-orange-500/20 bg-orange-500/5 p-4"
+                              >
+                                <div className="flex items-start gap-3">
+                                  <AlertTriangle className="mt-0.5 h-4 w-4 text-primary" />
+                                  <div>
+                                    <p className="font-semibold text-foreground">{alert.title}</p>
+                                    <p className="mt-1 text-sm text-muted-foreground">{alert.detail}</p>
+                                  </div>
+                                </div>
+                              </motion.div>
+                            ))
+                          ) : (
+                            <div className="rounded-[24px] border border-emerald-500/20 bg-emerald-500/5 p-4">
+                              <div className="flex items-start gap-3">
+                                <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-500" />
+                                <div>
+                                  <p className="font-semibold text-foreground">Operations stable</p>
+                                  <p className="mt-1 text-sm text-muted-foreground">No urgent queue issues need intervention right now.</p>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </SectionShell>
+                    </div>
+                  </div>
+                )}
+
+                {activeSection === "analytics" && (
+                  <SectionShell
+                    id="analytics"
+                    title="Branch analytics"
+                    description="Quick metrics, queue health, and a simple performance chart."
+                  >
+                    <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(260px,0.85fr)]">
+                      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rounded-[24px] border border-border bg-background p-5">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-primary">Order trend</p>
+                            <h3 className="mt-2 text-xl font-black tracking-tight text-foreground">Seven-day volume</h3>
+                            <p className="mt-2 text-sm text-muted-foreground">Rolling branch order volume across the last seven days.</p>
+                          </div>
+                          <div className="rounded-full border border-border bg-card px-3 py-1 text-xs font-semibold text-muted-foreground">
+                            {formatPrice(trackedRevenue)} tracked
+                          </div>
+                        </div>
+                        <div className="mt-6 grid h-64 grid-cols-7 items-end gap-3">
+                          {dailyVolume.map((day, index) => (
+                            <motion.div
+                              key={day.key}
+                              initial={{ opacity: 0, y: 16 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ delay: index * 0.04 }}
+                              className="flex h-full flex-col items-center justify-end gap-3"
+                            >
+                              <span className="text-xs font-semibold text-muted-foreground">{day.orders}</span>
+                              <div className="flex h-full w-full items-end rounded-2xl bg-muted/50 p-1">
+                                <motion.div
+                                  initial={{ height: 0 }}
+                                  animate={{ height: `${Math.max(10, (day.orders / maxDailyOrders) * 100)}%` }}
+                                  transition={{ delay: 0.08 + index * 0.04, duration: 0.3 }}
+                                  className="w-full rounded-xl bg-gradient-to-t from-primary to-orange-400"
+                                />
+                              </div>
+                              <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">{day.label}</span>
+                            </motion.div>
+                          ))}
+                        </div>
+                      </motion.div>
+
+                      <div className="space-y-4">
+                        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+                          <div className="rounded-[24px] border border-border bg-background p-4">
+                            <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-muted-foreground">{t("branch_dashboard.analytics.total_sales")}</p>
+                            <p className="mt-3 text-2xl font-black tracking-tight text-foreground">{formatPrice(completedRevenue)}</p>
+                            <p className="mt-2 text-sm text-muted-foreground">{t("branch_dashboard.analytics.completed_orders", { count: completedOrders })}</p>
+                          </div>
+                          <div className="rounded-[24px] border border-border bg-background p-4">
+                            <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-muted-foreground">{t("branch_dashboard.analytics.active_pipeline")}</p>
+                            <p className="mt-3 text-2xl font-black tracking-tight text-foreground">{activeOrders.length}</p>
+                            <p className="mt-2 text-sm text-muted-foreground">{staffRows.filter((staff) => staff.assignedOrders > 0).length} staff carrying live work</p>
+                          </div>
+                        </motion.div>
+
+                        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }} className="rounded-[24px] border border-border bg-background p-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-primary">{t("branch_dashboard.analytics.status_mix")}</p>
+                              <p className="mt-2 text-sm text-muted-foreground">{t("branch_dashboard.analytics.status_title")}</p>
+                            </div>
+                            <BellRing className="h-4 w-4 text-primary" />
+                          </div>
+                          <div className="mt-5 space-y-3">
+                            {statusRows.map((row) => (
+                              <div key={row.label} className="space-y-1.5">
+                                <div className="flex items-center justify-between text-sm">
+                                  <span className="text-foreground">{row.label}</span>
+                                  <span className="font-semibold text-muted-foreground">{row.value}</span>
+                                </div>
+                                <div className="h-2 rounded-full bg-muted">
+                                  <motion.div
+                                    initial={{ width: 0 }}
+                                    animate={{ width: `${row.value ? (row.value / maxStatusCount) * 100 : 0}%` }}
+                                    transition={{ duration: 0.35 }}
+                                    className={cn("h-2 rounded-full", row.color)}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </motion.div>
+                      </div>
+                    </div>
+                  </SectionShell>
+                )}
+
+                {activeSection === "orders" && (
+                  <SectionShell
+                    id="orders"
+                    title={isManager ? t("branch_dashboard.orders.manager_heading") : t("branch_dashboard.orders.staff_heading")}
+                    description={isManager ? "Tabular branch order control with fast filters and inline actions." : t("branch_dashboard.orders.staff_desc")}
+                    actions={
+                      <div className="flex w-full flex-col gap-3 lg:w-auto lg:flex-row lg:items-center">
+                        <div className="relative w-full lg:w-72">
+                          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                          <input
+                            value={orderSearch}
+                            onChange={(event) => setOrderSearch(event.target.value)}
+                            placeholder="Search orders, customers, staff..."
+                            className="h-11 w-full rounded-2xl border border-border bg-background pl-10 pr-4 text-sm text-foreground outline-none focus:border-primary/30"
+                          />
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {ORDER_FILTERS.map((filter) => (
+                            <button
+                              key={filter}
+                              type="button"
+                              onClick={() => setOrderFilter(filter)}
+                              className={cn(
+                                "rounded-full border px-3 py-1.5 text-xs font-bold uppercase tracking-[0.14em] transition-colors",
+                                orderFilter === filter
+                                  ? "border-primary/20 bg-primary text-primary-foreground"
+                                  : "border-border bg-background text-muted-foreground hover:text-foreground",
+                              )}
+                            >
+                              {filter === "all" ? t("branch_dashboard.filters.all") : t(`branch_dashboard.status.${filter}`)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    }
+                  >
+                    {ordersQuery.isLoading ? (
+                      <p className="text-sm text-muted-foreground">{t("branch_dashboard.loading_orders")}</p>
+                    ) : filteredOrders.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">{t("branch_dashboard.no_orders")}</p>
+                    ) : (
+                      <>
+                        <div className="space-y-4 xl:hidden">
+                          {filteredOrders.map((order, index) => {
+                            const items = parseItems(order.items);
+                            const selectedStaff = staffSelectionByOrder[order.id] || "";
+                            return (
+                              <motion.div
+                                key={order.id}
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: index * 0.03 }}
+                                className="rounded-[24px] border border-border bg-background p-4"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <p className="font-bold text-foreground">{t("branch_dashboard.order_number", { id: order.id })}</p>
+                                    <p className="mt-1 text-sm text-muted-foreground">{order.customer_name || t("branch_dashboard.unknown_customer")}</p>
+                                  </div>
+                                  <span className={cn("rounded-full border px-2.5 py-1 text-[11px] font-bold", statusTone(order.status))}>
+                                    {t(`branch_dashboard.status.${order.status}`)}
+                                  </span>
+                                </div>
+                                <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                                  <div>
+                                    <p className="text-muted-foreground">{t("branch_dashboard.pickup_time")}</p>
+                                    <p className="mt-1 font-medium text-foreground">{order.pickup_time || "--"}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-muted-foreground">{t("branch_dashboard.order_total")}</p>
+                                    <p className="mt-1 font-medium text-foreground">{formatPrice(order.total)}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-muted-foreground">{t("branch_dashboard.items")}</p>
+                                    <p className="mt-1 font-medium text-foreground">{items.length}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-muted-foreground">Assigned</p>
+                                    <p className="mt-1 font-medium text-foreground">{order.assigned_staff || "--"}</p>
+                                  </div>
+                                </div>
+                                <div className="mt-4 space-y-2">
+                                  {isManager && (order.status === "Pending" || order.status === "Accepted") ? (
+                                    <>
+                                      <select
+                                        value={selectedStaff}
+                                        onChange={(event) =>
+                                          setStaffSelectionByOrder((current) => ({ ...current, [order.id]: event.target.value }))
+                                        }
+                                        className="h-11 w-full rounded-2xl border border-border bg-card px-3 text-sm text-foreground outline-none"
+                                      >
+                                        <option value="">Select staff</option>
+                                        {staffRows.map((staff) => (
+                                          <option key={staff.id} value={String(staff.id)}>
+                                            {getStaffLabel(staff)}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <div className="flex gap-2">
+                                        {order.status === "Pending" ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => orderAction.mutate({ orderId: order.id, endpoint: "accept" })}
+                                            className="flex-1 rounded-2xl border border-primary/20 bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground"
+                                          >
+                                            {t("branch_dashboard.action.accept_order")}
+                                          </button>
+                                        ) : null}
+                                        <button
+                                          type="button"
+                                          disabled={!selectedStaff}
+                                          onClick={() => assignToStaff(order)}
+                                          className="flex-1 rounded-2xl border border-border bg-foreground px-4 py-2.5 text-sm font-bold text-background disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                          Assign
+                                        </button>
+                                      </div>
+                                    </>
+                                  ) : null}
+                                  {!isManager && order.status === "Assigned" ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => orderAction.mutate({ orderId: order.id, endpoint: "start" })}
+                                      className="w-full rounded-2xl border border-primary/20 bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground"
+                                    >
+                                      {t("branch_dashboard.action.start_preparing")}
+                                    </button>
+                                  ) : null}
+                                  {!isManager && order.status === "Preparing" ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => orderAction.mutate({ orderId: order.id, endpoint: "ready" })}
+                                      className="w-full rounded-2xl border border-primary/20 bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground"
+                                    >
+                                      {t("branch_dashboard.action.mark_ready")}
+                                    </button>
+                                  ) : null}
+                                  {isManager && order.status === "Ready for Pick-up" ? (
+                                    <div className="flex gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => orderAction.mutate({ orderId: order.id, endpoint: "complete" })}
+                                        className="flex-1 rounded-2xl border border-primary/20 bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground"
+                                      >
+                                        {t("branch_dashboard.action.complete_order")}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => orderAction.mutate({ orderId: order.id, endpoint: "no-show" })}
+                                        className="rounded-2xl border border-border bg-background px-4 py-2.5 text-sm font-bold text-foreground"
+                                      >
+                                        No-show
+                                      </button>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </motion.div>
+                            );
+                          })}
+                        </div>
+
+                        <div className="hidden overflow-x-auto xl:block">
+                          <table className="min-w-full text-left">
+                            <thead>
+                              <tr className="border-b border-border text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                                <th className="pb-3 pr-4 font-bold">Order</th>
+                                <th className="pb-3 pr-4 font-bold">{t("branch_dashboard.customer")}</th>
+                                <th className="pb-3 pr-4 font-bold">Status</th>
+                                <th className="pb-3 pr-4 font-bold">{t("branch_dashboard.pickup_time")}</th>
+                                <th className="pb-3 pr-4 font-bold">{t("branch_dashboard.order_total")}</th>
+                                <th className="pb-3 pr-4 font-bold">Staff</th>
+                                <th className="pb-3 font-bold text-right">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {filteredOrders.map((order, index) => {
+                                const items = parseItems(order.items);
+                                const selectedStaff = staffSelectionByOrder[order.id] || "";
+                                return (
+                                  <motion.tr
+                                    key={order.id}
+                                    initial={{ opacity: 0, y: 8 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ delay: index * 0.02 }}
+                                    className="border-b border-border last:border-b-0"
+                                  >
+                                    <td className="py-4 pr-4 align-top">
+                                      <p className="font-semibold text-foreground">{t("branch_dashboard.order_number", { id: order.id })}</p>
+                                      <p className="mt-1 text-sm text-muted-foreground">{items.length} items</p>
+                                      <p className="mt-1 text-xs text-muted-foreground">{formatDateTime(order.created_at)}</p>
+                                    </td>
+                                    <td className="py-4 pr-4 align-top">
+                                      <p className="font-medium text-foreground">{order.customer_name || t("branch_dashboard.unknown_customer")}</p>
+                                      <p className="mt-1 text-sm text-muted-foreground">{order.customer_phone || t("branch_dashboard.no_phone")}</p>
+                                    </td>
+                                    <td className="py-4 pr-4 align-top">
+                                      <span className={cn("inline-flex rounded-full border px-2.5 py-1 text-xs font-bold", statusTone(order.status))}>
+                                        {t(`branch_dashboard.status.${order.status}`)}
+                                      </span>
+                                    </td>
+                                    <td className="py-4 pr-4 align-top text-sm text-foreground">{order.pickup_time || "--"}</td>
+                                    <td className="py-4 pr-4 align-top text-sm font-semibold text-foreground">{formatPrice(order.total)}</td>
+                                    <td className="py-4 pr-4 align-top">
+                                      {isManager && (order.status === "Pending" || order.status === "Accepted") ? (
+                                        <select
+                                          value={selectedStaff}
+                                          onChange={(event) =>
+                                            setStaffSelectionByOrder((current) => ({ ...current, [order.id]: event.target.value }))
+                                          }
+                                          className="h-10 min-w-[180px] rounded-2xl border border-border bg-background px-3 text-sm text-foreground outline-none"
+                                        >
+                                          <option value="">Select staff</option>
+                                          {staffRows.map((staff) => (
+                                            <option key={staff.id} value={String(staff.id)}>
+                                              {getStaffLabel(staff)}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      ) : (
+                                        <span className="text-sm text-muted-foreground">{order.assigned_staff || "--"}</span>
+                                      )}
+                                    </td>
+                                    <td className="py-4 align-top">
+                                      <div className="flex flex-wrap justify-end gap-2">
+                                        {isManager && order.status === "Pending" ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => orderAction.mutate({ orderId: order.id, endpoint: "accept" })}
+                                            className="rounded-2xl border border-primary/20 bg-primary px-3 py-2 text-xs font-bold text-primary-foreground"
+                                          >
+                                            {t("branch_dashboard.action.accept_order")}
+                                          </button>
+                                        ) : null}
+                                        {isManager && (order.status === "Pending" || order.status === "Accepted") ? (
+                                          <button
+                                            type="button"
+                                            disabled={!selectedStaff}
+                                            onClick={() => assignToStaff(order)}
+                                            className="rounded-2xl border border-border bg-foreground px-3 py-2 text-xs font-bold text-background disabled:cursor-not-allowed disabled:opacity-50"
+                                          >
+                                            Assign
+                                          </button>
+                                        ) : null}
+                                        {!isManager && order.status === "Assigned" ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => orderAction.mutate({ orderId: order.id, endpoint: "start" })}
+                                            className="rounded-2xl border border-primary/20 bg-primary px-3 py-2 text-xs font-bold text-primary-foreground"
+                                          >
+                                            {t("branch_dashboard.action.start_preparing")}
+                                          </button>
+                                        ) : null}
+                                        {!isManager && order.status === "Preparing" ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => orderAction.mutate({ orderId: order.id, endpoint: "ready" })}
+                                            className="rounded-2xl border border-primary/20 bg-primary px-3 py-2 text-xs font-bold text-primary-foreground"
+                                          >
+                                            {t("branch_dashboard.action.mark_ready")}
+                                          </button>
+                                        ) : null}
+                                        {isManager && order.status === "Ready for Pick-up" ? (
+                                          <>
+                                            <button
+                                              type="button"
+                                              onClick={() => orderAction.mutate({ orderId: order.id, endpoint: "complete" })}
+                                              className="rounded-2xl border border-primary/20 bg-primary px-3 py-2 text-xs font-bold text-primary-foreground"
+                                            >
+                                              {t("branch_dashboard.action.complete_order")}
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => orderAction.mutate({ orderId: order.id, endpoint: "no-show" })}
+                                              className="rounded-2xl border border-border bg-background px-3 py-2 text-xs font-bold text-foreground"
+                                            >
+                                              No-show
+                                            </button>
+                                          </>
+                                        ) : null}
+                                      </div>
+                                    </td>
+                                  </motion.tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </>
+                    )}
+                  </SectionShell>
+                )}
+
+                {activeSection === "staff" && (
+                  <SectionShell
+                    id="staff"
+                    title={t("branch_dashboard.staff.heading")}
+                    description={t("branch_dashboard.staff.desc", { branch: branchName })}
+                  >
+                    <div className="grid gap-3">
+                      {staffRows.map((staff, index) => (
+                        <motion.div
+                          key={staff.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: index * 0.04 }}
+                          className="flex items-center justify-between rounded-[24px] border border-border bg-background p-4"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="rounded-2xl border border-primary/15 bg-primary/10 p-2 text-primary">
+                              <UserRound className="h-4 w-4" />
+                            </div>
+                            <div>
+                              <p className="font-semibold text-foreground">{getStaffLabel(staff)}</p>
+                              <p className="text-sm text-muted-foreground">{staff.email}</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-lg font-black tracking-tight text-foreground">{staff.assignedOrders}</p>
+                            <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">active</p>
+                          </div>
+                        </motion.div>
+                      ))}
+                      {staffRows.length === 0 ? <p className="text-sm text-muted-foreground">No branch staff found.</p> : null}
+                    </div>
+                  </SectionShell>
+                )}
+
+                {activeSection === "inventory" && isManager && (
+                  <SectionShell
+                    id="inventory"
+                    title={t("branch_dashboard.inventory.heading")}
+                    description={t("branch_dashboard.inventory.desc")}
+                    actions={
+                      <div className="relative w-full lg:w-64">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <input
+                          value={inventorySearch}
+                          onChange={(event) => setInventorySearch(event.target.value)}
+                          placeholder={t("branch_dashboard.inventory.search")}
+                          className="h-11 w-full rounded-2xl border border-border bg-background pl-10 pr-4 text-sm text-foreground outline-none focus:border-primary/30"
                         />
                       </div>
-                      <div className="text-xs uppercase tracking-[0.2em] text-slate-500">{day.label}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+                    }
+                  >
+                    {stockQuery.isLoading ? (
+                      <p className="text-sm text-muted-foreground">{t("branch_dashboard.inventory.loading")}</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {stock.slice(0, 8).map((item, index) => (
+                          <motion.div
+                            key={item.id}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: index * 0.03 }}
+                            className="flex items-center justify-between gap-3 rounded-[24px] border border-border bg-background p-4"
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate font-semibold text-foreground">{item.product.name}</p>
+                              <p className="mt-1 text-sm text-muted-foreground">
+                                {formatPrice(item.product.price)} · {t("branch_dashboard.inventory.in_stock", { count: item.stock_count })}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => stockMutation.mutate(item.product_id)}
+                              disabled={stockMutation.isPending}
+                              className="rounded-2xl border border-border bg-card px-3 py-2 text-xs font-bold uppercase tracking-[0.14em] text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {t("branch_dashboard.inventory.mark_out")}
+                            </button>
+                          </motion.div>
+                        ))}
+                        {!stock.length ? <p className="text-sm text-muted-foreground">No inventory items match this search.</p> : null}
+                      </div>
+                    )}
+                  </SectionShell>
+                )}
 
-      {ordersLoading && (
-        <div className="fixed inset-x-0 top-0 z-40 h-1 bg-transparent">
-          <div className="h-full w-1/3 animate-[pulse_1.1s_ease-in-out_infinite] bg-[#ff6b00]" />
-        </div>
-      )}
+                {activeSection === "invites" && isManager && (
+                  <SectionShell
+                    id="invites"
+                    title={t("branch_dashboard.invite.heading")}
+                    description={t("branch_dashboard.invite.desc", { branch: branchName })}
+                  >
+                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
+                      <input
+                        value={inviteEmail}
+                        onChange={(event) => setInviteEmail(event.target.value)}
+                        placeholder={t("branch_dashboard.invite.optional_email")}
+                        className="h-12 w-full rounded-2xl border border-border bg-background px-4 text-sm text-foreground outline-none focus:border-primary/30"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => inviteMutation.mutate()}
+                        disabled={inviteMutation.isPending}
+                        className="w-full rounded-2xl border border-primary/20 bg-primary px-4 py-3 text-sm font-bold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {inviteMutation.isPending ? t("branch_dashboard.invite.creating") : t("branch_dashboard.invite.create")}
+                      </button>
+
+                      {latestInvite ? (
+                        <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="rounded-[24px] border border-border bg-background p-4">
+                          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">{t("branch_dashboard.invite.latest")}</p>
+                          <p className="mt-2 break-all text-sm text-foreground">{latestInvite.invite_url}</p>
+                          <p className="mt-2 text-sm text-muted-foreground">
+                            {t("branch_dashboard.invite.expires", { date: formatDateTime(latestInvite.expires_at) })}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={copyInviteLink}
+                            className="mt-3 rounded-2xl border border-border bg-card px-4 py-2 text-sm font-semibold text-foreground"
+                          >
+                            {t("branch_dashboard.copy")}
+                          </button>
+                        </motion.div>
+                      ) : null}
+                    </motion.div>
+                  </SectionShell>
+                )}
+              </motion.div>
+            </AnimatePresence>
+          </div>
+        </main>
+      </div>
     </div>
   );
 };

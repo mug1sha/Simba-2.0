@@ -154,6 +154,7 @@ class Order(Base):
     fulfillment_type = Column(String, default="pickup")
     pickup_branch = Column(String, nullable=True)
     pickup_time = Column(String, nullable=True)
+    delivery_location = Column(String, nullable=True)
     deposit_amount = Column(Float, default=0)
     deposit_method = Column(String, nullable=True)
     assigned_staff = Column(String, nullable=True)

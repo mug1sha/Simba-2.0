@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from typing import List, Optional
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, field_validator, model_validator
 import re
 
 class ProductBase(BaseModel):
@@ -249,6 +249,7 @@ class Order(BaseModel):
     fulfillment_type: Optional[str] = "pickup"
     pickup_branch: Optional[str] = None
     pickup_time: Optional[str] = None
+    delivery_location: Optional[str] = None
     deposit_amount: Optional[float] = 0
     deposit_method: Optional[str] = None
     assigned_staff: Optional[str] = None
@@ -276,8 +277,17 @@ class OrderCreate(BaseModel):
     fulfillment_type: Optional[str] = "pickup"
     pickup_branch: Optional[str] = None
     pickup_time: Optional[str] = None
+    delivery_location: Optional[str] = None
     deposit_amount: Optional[float] = 0
     deposit_method: Optional[str] = None
+
+    @field_validator("fulfillment_type")
+    @classmethod
+    def fulfillment_type_value(cls, v: Optional[str]) -> str:
+        normalized = (v or "pickup").strip().lower()
+        if normalized not in {"pickup", "delivery"}:
+            raise ValueError("Fulfillment type must be pickup or delivery")
+        return normalized
 
     @field_validator("pickup_time")
     @classmethod
@@ -302,6 +312,22 @@ class OrderCreate(BaseModel):
             raise ValueError("Pickup time cannot be later than tomorrow")
 
         return v
+
+    @model_validator(mode="after")
+    def validate_fulfillment_fields(self):
+        if self.fulfillment_type == "pickup":
+            if not (self.pickup_branch or "").strip():
+                raise ValueError("Pickup branch is required for pickup orders")
+            if not self.pickup_time:
+                raise ValueError("Pickup time is required for pickup orders")
+            self.delivery_location = None
+        else:
+            if not (self.delivery_location or "").strip():
+                raise ValueError("Delivery location is required for delivery orders")
+            self.pickup_branch = None
+            self.pickup_time = None
+
+        return self
 
 class BranchAssignRequest(BaseModel):
     staff_user_id: int

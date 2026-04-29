@@ -18,6 +18,7 @@ import ChatWidget from "@/components/ChatWidget";
 import { useCart } from "@/contexts/CartContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { buildApiUrl, readErrorMessage, readJsonResponse } from "@/lib/api";
+import fallbackCatalog from "@/data/products.json";
 import { formatPrice } from "@/lib/products";
 import {
   BRANCH_LOCATIONS,
@@ -150,11 +151,7 @@ const buildFallbackBranchInventory = (
 };
 
 const readFallbackBranchInventory = async (branchName: string, search: string) => {
-  const res = await fetch(buildApiUrl("/api/products?limit=1000"));
-  if (!res.ok) {
-    throw new Error(await readErrorMessage(res, "Failed to fetch catalog fallback"));
-  }
-  const products = await readJsonResponse<CatalogProduct[]>(res, "Catalog fallback response was empty.");
+  const products = fallbackCatalog.products as CatalogProduct[];
   return buildFallbackBranchInventory(branchName, products, search);
 };
 

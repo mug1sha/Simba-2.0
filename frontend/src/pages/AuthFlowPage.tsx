@@ -254,7 +254,7 @@ export const AuthFlowPage = () => {
                       <p className="font-bold">{roleLabel}</p>
                       <p className="mt-1 text-xs text-primary/80">
                         {invitePreview.branch
-                          ? t("auth.invite.branch_change_allowed", { branch: invitePreview.branch })
+                          ? t("auth.invite.branch_fixed", { branch: invitePreview.branch })
                           : t("auth.invite.choose_branch")}
                       </p>
                       <p className="mt-1 text-xs text-primary/80">
@@ -301,23 +301,32 @@ export const AuthFlowPage = () => {
                     className="h-14 w-full rounded-2xl border border-white/10 bg-white/[0.06] px-4 text-white outline-none focus:border-primary/60"
                   />
 
-                  <select
-                    value={branch}
-                    onChange={(event) => setBranch(event.target.value)}
-                    required
-                    className="h-14 w-full rounded-2xl border border-white/10 bg-white/[0.06] px-4 text-white outline-none focus:border-primary/60"
-                  >
-                    {!branch && (
-                      <option value="" disabled className="bg-[#0c0c1e] text-gray-400">
-                        {t("auth.invite.choose_branch")}
-                      </option>
-                    )}
-                    {BRANCH_NAMES.map((branchName) => (
-                      <option key={branchName} value={branchName} className="bg-[#0c0c1e] text-white">
-                        {branchName}
-                      </option>
-                    ))}
-                  </select>
+                  {invitePreview?.branch ? (
+                    <input
+                      value={invitePreview.branch}
+                      readOnly
+                      aria-label={t("auth.invite.choose_branch")}
+                      className="h-14 w-full cursor-not-allowed rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-white/80 outline-none"
+                    />
+                  ) : (
+                    <select
+                      value={branch}
+                      onChange={(event) => setBranch(event.target.value)}
+                      required
+                      className="h-14 w-full rounded-2xl border border-white/10 bg-white/[0.06] px-4 text-white outline-none focus:border-primary/60"
+                    >
+                      {!branch && (
+                        <option value="" disabled className="bg-[#0c0c1e] text-gray-400">
+                          {t("auth.invite.choose_branch")}
+                        </option>
+                      )}
+                      {BRANCH_NAMES.map((branchName) => (
+                        <option key={branchName} value={branchName} className="bg-[#0c0c1e] text-white">
+                          {branchName}
+                        </option>
+                      ))}
+                    </select>
+                  )}
 
                   <div className="space-y-4">
                     <div className="space-y-1">

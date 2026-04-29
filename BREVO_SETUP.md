@@ -65,6 +65,8 @@ SMTP_USE_TLS=true
 SMTP_USE_SSL=false
 ```
 
+`FRONTEND_URL` is automatically included in the backend CORS allowlist. Add any secondary frontend or preview origins to `CORS_ORIGINS`.
+
 For production, set:
 
 ```env

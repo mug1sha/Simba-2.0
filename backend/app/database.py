@@ -76,6 +76,8 @@ def ensure_runtime_schema():
             conn.execute(text("ALTER TABLE orders ADD COLUMN pickup_branch VARCHAR"))
         if "pickup_time" not in order_columns:
             conn.execute(text("ALTER TABLE orders ADD COLUMN pickup_time VARCHAR"))
+        if "delivery_location" not in order_columns:
+            conn.execute(text("ALTER TABLE orders ADD COLUMN delivery_location VARCHAR"))
         if "deposit_amount" not in order_columns:
             conn.execute(text("ALTER TABLE orders ADD COLUMN deposit_amount FLOAT DEFAULT 0"))
         if "deposit_method" not in order_columns:

@@ -199,22 +199,29 @@ const OrderCard = ({ order, onCancel }: OrderCardProps) => {
                 </div>
               )}
 
-              {order.fulfillment_type === "pickup" && (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="rounded-2xl bg-white/[0.03] border border-white/5 p-4">
-                    <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black mb-1">{t("order.pickup_branch")}</p>
-                    <p className="text-xs font-bold text-white">{order.pickup_branch}</p>
+              <div className={`grid grid-cols-1 gap-3 ${order.fulfillment_type === "pickup" ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
+                {order.fulfillment_type === "pickup" ? (
+                  <>
+                    <div className="rounded-2xl bg-white/[0.03] border border-white/5 p-4">
+                      <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black mb-1">{t("order.pickup_branch")}</p>
+                      <p className="text-xs font-bold text-white">{order.pickup_branch}</p>
+                    </div>
+                    <div className="rounded-2xl bg-white/[0.03] border border-white/5 p-4">
+                      <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black mb-1">{t("order.pickup_time")}</p>
+                      <p className="text-xs font-bold text-white">{order.pickup_time}</p>
+                    </div>
+                  </>
+                ) : (
+                  <div className="rounded-2xl bg-white/[0.03] border border-white/5 p-4 sm:col-span-1">
+                    <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black mb-1">{t("order.delivery_location")}</p>
+                    <p className="text-xs font-bold text-white whitespace-pre-wrap">{order.delivery_location || t("common.not_set")}</p>
                   </div>
-                  <div className="rounded-2xl bg-white/[0.03] border border-white/5 p-4">
-                    <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black mb-1">{t("order.pickup_time")}</p>
-                    <p className="text-xs font-bold text-white">{order.pickup_time}</p>
-                  </div>
-                  <div className="rounded-2xl bg-white/[0.03] border border-white/5 p-4">
-                    <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black mb-1">{t("order.deposit_paid")}</p>
-                    <p className="text-xs font-bold text-white">RWF {(order.deposit_amount || 0).toLocaleString()}</p>
-                  </div>
+                )}
+                <div className="rounded-2xl bg-white/[0.03] border border-white/5 p-4">
+                  <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black mb-1">{t("order.deposit_paid")}</p>
+                  <p className="text-xs font-bold text-white">RWF {(order.deposit_amount || 0).toLocaleString()}</p>
                 </div>
-              )}
+              </div>
 
               {isPickupCompleted && (
                 <div className="rounded-3xl border border-primary/20 bg-primary/5 p-5">

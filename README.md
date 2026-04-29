@@ -86,6 +86,8 @@ SMTP_PASSWORD=<smtp-password>
 EMAIL_FROM=no-reply@your-domain.example
 ```
 
+`FRONTEND_URL` is always added to the allowed CORS origins. Use `CORS_ORIGINS` for any extra origins that should also be able to call the API.
+
 Email behavior:
 - Development: if SMTP variables are not set, verification and reset messages are written to `backend/dev_mailbox.log`. The API also returns a local `dev_link` so the UI can show an "Open local email link" button.
 - Production: set SMTP variables and verify your sending domain with your email provider. The backend will send verification and reset messages through SMTP and will not expose `dev_link`.

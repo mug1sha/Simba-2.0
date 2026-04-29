@@ -3,6 +3,7 @@ Simba CRUD Operations
 Handles all database interactions with transaction safety and clear logic separation.
 """
 import json
+import math
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
@@ -27,7 +28,6 @@ SIMBA_BRANCHES = [
     "Simba Centenary",
 ]
 BRANCH_PRODUCTS_PER_CATEGORY = 5
-PICKUP_DEPOSIT_AMOUNT = 500
 SEARCH_STOPWORDS = {
     "a", "an", "and", "any", "are", "about", "at", "can", "could", "do", "does", "for", "from", "have",
     "how", "i", "is", "it", "me", "of", "on", "please", "show", "the", "to", "you", "your",
@@ -534,12 +534,15 @@ def accept_role_invite(db: Session, token: str, req: schemas.RoleInviteAcceptReq
     if existing_user:
         return None, "An account with this email already exists"
 
-    selected_branch = req.branch.strip() if req.branch else invite.branch
+    requested_branch = req.branch.strip() if req.branch else None
+    selected_branch = invite.branch or requested_branch
     if invite.role in {"branch_manager", "branch_staff"}:
         if not selected_branch:
             return None, "Please choose a branch"
         if selected_branch not in SIMBA_BRANCHES:
             return None, "Unknown branch"
+        if invite.branch and requested_branch and requested_branch != invite.branch:
+            return None, "This invite is locked to a specific branch"
 
     user = models.User(
         email=email,
@@ -740,13 +743,16 @@ def subscribe_restock(db: Session, user_id: int, product_id: int):
 # --- ORDERS ---
 def create_order(db: Session, user_id: int, order: schemas.OrderCreate):
     """Register a new customer order."""
+    fulfillment_type = order.fulfillment_type or "pickup"
+    deposit_amount = math.ceil(max(order.total, 0) * 0.1) if order.total else 0
     db_order = models.Order(
         user_id=user_id, total=order.total, items=order.items, 
         address_id=order.address_id, payment_method_id=order.payment_method_id,
-        fulfillment_type=order.fulfillment_type or "pickup",
+        fulfillment_type=fulfillment_type,
         pickup_branch=order.pickup_branch,
         pickup_time=order.pickup_time,
-        deposit_amount=order.deposit_amount or 0,
+        delivery_location=order.delivery_location,
+        deposit_amount=deposit_amount,
         deposit_method=order.deposit_method,
         status="Pending", created_at=str(datetime.utcnow())
     )
@@ -762,6 +768,15 @@ def create_order(db: Session, user_id: int, order: schemas.OrderCreate):
             ntype="Order",
             title=f"Pickup order sent to {db_order.pickup_branch}",
             message="Your pickup order is waiting for the branch manager to assign it to staff.",
+            link="/customer"
+        )
+    else:
+        create_notification(
+            db,
+            user_id=user_id,
+            ntype="Order",
+            title=f"Delivery order #{db_order.id} received",
+            message="Your delivery order was received and is waiting for processing.",
             link="/customer"
         )
     return db_order
@@ -1219,9 +1234,9 @@ def get_ai_support_response(
             "wishlist_auth": "Log in first and I can read your wishlist to help with recommendations and saved items.",
             "hits": "Some of our current hits include {list}! You can't go wrong with these. 🔥",
             "delivery": "We offer express delivery across Kigali! RWF 2,000 flat rate, or FREE for orders over RWF 50,000. 🚚",
-            "pickup": "For demo checkout, Simba uses branch pick-up. Choose a Kigali branch, choose a pick-up time, then confirm with a RWF {deposit:,.0f} MTN MoMo deposit. Your order is sent to branch staff immediately.",
+            "pickup": "For demo checkout, Simba supports pick-up or delivery. Choose a Kigali branch and pick-up time for collection, or choose delivery and enter your location. Then confirm with a 10% MTN MoMo deposit.",
             "branches": "You can pick up from these Simba branches: {list}.",
-            "deposit": "Your order requires a RWF {deposit:,.0f} MTN MoMo deposit to confirm. This is a demo payment screen, then you pay the balance when you pick up.",
+            "deposit": "Your order requires a 10% MTN MoMo deposit to confirm. This is a demo payment screen, then you pay the remaining balance later.",
             "pay": "We accept MTN MoMo, Airtel Money, and all major cards securely at checkout. 📱💳",
             "help": "I'm here to help! I can check prices, suggest products, or tell you about our delivery options. What's on your mind? 😊",
             "profile_auth": "Log in first and I can read your saved Simba profile details like your name, phone number, and addresses.",
@@ -1243,9 +1258,9 @@ def get_ai_support_response(
             "wishlist_auth": "Banza winjire maze nsome urutonde rw'ibyo ukunda kugira ngo ngufashe neza.",
             "hits": "Bimwe mu bikunzwe cyane harimo {list}! Ibi ni byiza rwose. 🔥",
             "delivery": "Tugeza ibintu hose i Kigali vuba! Wishyura 2,000 macye, cyangwa ku buntu iyo uguze ibirengeje 50,000. 🚚",
-            "pickup": "Muri demo, Simba ikoresha gufatira ku ishami. Hitamo ishami ryo muri Kigali, hitamo igihe cyo gufata, hanyuma wemeze na avansi ya MTN MoMo ya RWF {deposit:,.0f}. Komande ihita ijya ku bakozi b'ishami.",
+            "pickup": "Muri demo, Simba yemera gufata cyangwa kugeza. Hitamo ishami ryo muri Kigali n'igihe cyo gufata, cyangwa hitamo kugeza ushyiremo aho uri. Hanyuma wemeze wishyura avansi ya MTN MoMo ya 10%.",
             "branches": "Wafatira kuri aya mashami ya Simba: {list}.",
-            "deposit": "Komande yawe isaba avansi ya MTN MoMo ya RWF {deposit:,.0f} kugira ngo yemezwe. Ni screen ya demo, hanyuma igisigaye ukishyura uje gufata komande.",
+            "deposit": "Komande yawe isaba avansi ya MTN MoMo ya 10% kugira ngo yemezwe. Ni screen ya demo, hanyuma igisigaye ukishyura nyuma.",
             "pay": "Twemera MTN MoMo, Airtel Money, n'amakarita yose mu kwishyura. 📱💳",
             "help": "Ndi hano ngo ndagufasha! Nshobora kureba ibiciro, kukubwira ibyo wagura, cyangwa uburyo tubigeza mu rugo. Ni iki ukeneye? 😊",
             "profile_auth": "Banza winjire kugira ngo nsome amakuru yawe ya Simba nka amazina, telefone, na aderesi zabitswe.",
@@ -1267,9 +1282,9 @@ def get_ai_support_response(
             "wishlist_auth": "Connectez-vous d'abord et je pourrai lire votre liste d'envies pour vous aider.",
             "hits": "Certains de nos succès actuels incluent {list} ! Vous ne pouvez pas vous tromper avec ceux-ci. 🔥",
             "delivery": "Nous offrons une livraison express dans tout Kigali ! Tarif forfaitaire de 2 000 RWF, ou GRATUIT pour les commandes supérieures à 50 000 RWF. 🚚",
-            "pickup": "Pour la démo, Simba utilise le retrait en agence. Choisissez une agence à Kigali, une heure de retrait, puis confirmez avec un acompte MTN MoMo de RWF {deposit:,.0f}. La commande est envoyée immédiatement au personnel de l'agence.",
+            "pickup": "Pour la démo, Simba propose le retrait ou la livraison. Choisissez une agence de Kigali et une heure de retrait, ou choisissez la livraison et indiquez votre lieu. Confirmez ensuite avec un acompte MTN MoMo de 10%.",
             "branches": "Vous pouvez retirer votre commande dans ces agences Simba : {list}.",
-            "deposit": "Votre commande nécessite un acompte MTN MoMo de RWF {deposit:,.0f} pour être confirmée. C'est un écran de paiement simulé pour la démo, puis vous payez le solde au retrait.",
+            "deposit": "Votre commande nécessite un acompte MTN MoMo de 10% pour être confirmée. C'est un écran de paiement simulé pour la démo, puis vous payez le solde plus tard.",
             "pay": "Nous acceptons MTN MoMo, Airtel Money et toutes les cartes majeures en toute sécurité lors du paiement. 📱💳",
             "help": "Je suis là pour vous aider ! Je peux vérifier les prix, suggérer des produits ou vous parler de nos options de livraison. Que puis-je faire pour vous ? 😊",
             "profile_auth": "Connectez-vous d'abord et je pourrai lire vos informations Simba enregistrées comme votre nom, votre numéro et vos adresses.",
@@ -1396,15 +1411,15 @@ def get_ai_support_response(
         if branch_products:
             prod_list = [f"{p.name} (RWF {p.price:,.0f})" for p in branch_products]
             return {
-                "response": f"{T['pickup'].format(deposit=PICKUP_DEPOSIT_AMOUNT)} {T['found'].format(list='; '.join(prod_list))}",
+                "response": f"{T['pickup']} {T['found'].format(list='; '.join(prod_list))}",
                 "products": branch_products,
             }
         if any(k in msg for k in ["branch", "branches", "location", "locations", "ishami", "amashami", "agence", "agences", "magasin"]):
             return {"response": T["branches"].format(list=branch_list), "products": []}
-        return {"response": T["pickup"].format(deposit=PICKUP_DEPOSIT_AMOUNT), "products": []}
+        return {"response": T["pickup"], "products": []}
 
     if any(k in msg for k in deposit_terms):
-        return {"response": T["deposit"].format(deposit=PICKUP_DEPOSIT_AMOUNT), "products": []}
+        return {"response": T["deposit"], "products": []}
 
     # 2. Price/Product Search
     if any(k in msg for k in ["price", "cost", "how much", "find", "search", "igiciro", "angahe", "shaka", "prix", "coût", "combien", "trouver"]):
@@ -1430,7 +1445,7 @@ def get_ai_support_response(
 
     # 4. Delivery & Payment
     if any(k in msg for k in ["delivery", "shipping", "kugeza", "livraison", "expédition"]):
-        return {"response": T["pickup"].format(deposit=PICKUP_DEPOSIT_AMOUNT), "products": []}
+        return {"response": T["pickup"], "products": []}
     
     if any(k in msg for k in ["pay", "momo", "card", "kwishyura", "payer", "carte"]):
         return {"response": T["pay"], "products": []}
@@ -1459,7 +1474,7 @@ def get_ai_support_response(
                     "If wishlist context is present, use it for personalization and for questions about saved or favorite items. "
                     "Infer common shopping needs: for breakfast, suggest items like milk, bread, cereal, tea, coffee, juice, oats, jam, or honey if present. "
                     "For a direct product question like fresh milk, select matching milk products. "
-                    "You also know Simba's pickup operations: demo checkout is pickup-first, customers choose one Kigali branch, choose a pickup time, and confirm with a RWF 500 MTN MoMo deposit. "
+                    "You also know Simba's checkout operations: customers can choose pickup or delivery, and they confirm the order with a 10% MTN MoMo deposit. "
                     f"Real pickup branches are {', '.join(SIMBA_BRANCHES)}. "
                     "Return JSON only with this exact shape: "
                     "{\"response\":\"short natural-language answer\",\"product_ids\":[123,456]}. "

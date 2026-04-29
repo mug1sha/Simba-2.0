@@ -1,4 +1,4 @@
-import { X, Minus, Plus, ShoppingBag, Trash2, MapPin, Smartphone, ChevronRight, CheckCircle2, Shield, Clock, Store, Calendar as CalendarIcon } from "lucide-react";
+import { X, Minus, Plus, ShoppingBag, Trash2, MapPin, Smartphone, ChevronRight, CheckCircle2, Shield, Clock, Store, Calendar as CalendarIcon, Truck } from "lucide-react";
 import { useCart } from "@/contexts/CartContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatPrice } from "@/lib/products";
@@ -8,25 +8,32 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BRANCH_NAMES } from "@/lib/branches";
 import { motion, AnimatePresence } from "framer-motion";
-import { buildApiUrl, readJsonResponse } from "@/lib/api";
+import { buildApiUrl, readErrorMessage, readJsonResponse } from "@/lib/api";
 
 type CheckoutStep = "CART" | "BRANCH" | "DEPOSIT" | "SUCCESS";
 type PersistedCheckoutStep = Exclude<CheckoutStep, "SUCCESS">;
-type PickupDraft = {
+type FulfillmentType = "pickup" | "delivery";
+
+type CheckoutDraft = {
   step: PersistedCheckoutStep;
+  fulfillmentType: FulfillmentType;
   selectedBranch: string;
   pickupDate: string;
   pickupHour: string;
+  deliveryLocation: string;
   momoPhone: string;
 };
 
 type CreatedOrder = {
   id: number;
+  fulfillment_type?: FulfillmentType;
   pickup_branch?: string;
+  pickup_time?: string;
+  delivery_location?: string;
+  deposit_amount?: number;
 };
 
-const PICKUP_DEPOSIT_AMOUNT = 500;
-const PICKUP_DRAFT_STORAGE_KEY = "simba-pickup-draft";
+const CHECKOUT_DRAFT_STORAGE_KEY = "simba-checkout-draft";
 
 const pad2 = (value: number) => String(value).padStart(2, "0");
 
@@ -78,40 +85,44 @@ const getDefaultPickupSelection = () => {
   };
 };
 
-const getDefaultPickupDraft = (): PickupDraft => {
+const getDefaultCheckoutDraft = (): CheckoutDraft => {
   const selection = getDefaultPickupSelection();
   return {
     step: "CART",
+    fulfillmentType: "pickup",
     selectedBranch: BRANCH_NAMES[0],
     pickupDate: formatPickupDate(selection.date),
     pickupHour: selection.time,
+    deliveryLocation: "",
     momoPhone: "",
   };
 };
 
-const readPickupDraft = (): PickupDraft => {
-  if (typeof window === "undefined") return getDefaultPickupDraft();
+const readCheckoutDraft = (): CheckoutDraft => {
+  if (typeof window === "undefined") return getDefaultCheckoutDraft();
 
   try {
-    const raw = window.localStorage.getItem(PICKUP_DRAFT_STORAGE_KEY);
-    if (!raw) return getDefaultPickupDraft();
+    const raw = window.localStorage.getItem(CHECKOUT_DRAFT_STORAGE_KEY);
+    if (!raw) return getDefaultCheckoutDraft();
 
     const parsed = JSON.parse(raw);
-    const fallback = getDefaultPickupDraft();
+    const fallback = getDefaultCheckoutDraft();
     const pickupDate = typeof parsed?.pickupDate === "string" ? parsed.pickupDate : fallback.pickupDate;
 
     return {
       step: parsed?.step === "BRANCH" || parsed?.step === "DEPOSIT" ? parsed.step : "CART",
+      fulfillmentType: parsed?.fulfillmentType === "delivery" ? "delivery" : "pickup",
       selectedBranch:
         typeof parsed?.selectedBranch === "string" && BRANCH_NAMES.includes(parsed.selectedBranch)
           ? parsed.selectedBranch
           : fallback.selectedBranch,
       pickupDate,
       pickupHour: typeof parsed?.pickupHour === "string" ? parsed.pickupHour : fallback.pickupHour,
+      deliveryLocation: typeof parsed?.deliveryLocation === "string" ? parsed.deliveryLocation : "",
       momoPhone: typeof parsed?.momoPhone === "string" ? parsed.momoPhone : "",
     };
   } catch {
-    return getDefaultPickupDraft();
+    return getDefaultCheckoutDraft();
   }
 };
 
@@ -175,14 +186,16 @@ const CartDrawer = () => {
   const { items, selectedBranch: cartBranch, isCartOpen, setIsCartOpen, updateQuantity, removeItem, clearCart, totalPrice, totalItems } = useCart();
   const { token, isAuthenticated, refreshProfile } = useAuth();
   const queryClient = useQueryClient();
-  const initialDraft = readPickupDraft();
+  const initialDraft = readCheckoutDraft();
   const [step, setStep] = useState<CheckoutStep>(initialDraft.step);
+  const [fulfillmentType, setFulfillmentType] = useState<FulfillmentType>(initialDraft.fulfillmentType);
   const [selectedBranch, setSelectedBranch] = useState(cartBranch ?? initialDraft.selectedBranch);
   const [pickupDate, setPickupDate] = useState<Date | undefined>(() => {
     const parsedDate = parseStoredPickupDate(initialDraft.pickupDate);
     return parsedDate ?? getDefaultPickupSelection().date;
   });
   const [pickupHour, setPickupHour] = useState(initialDraft.pickupHour);
+  const [deliveryLocation, setDeliveryLocation] = useState(initialDraft.deliveryLocation);
   const [momoPhone, setMomoPhone] = useState(initialDraft.momoPhone);
   const [isProcessing, setIsProcessing] = useState(false);
   const [recentOrder, setRecentOrder] = useState<CreatedOrder | null>(null);
@@ -204,37 +217,41 @@ const CartDrawer = () => {
     return acc;
   }, {});
 
-  const depositAmount = PICKUP_DEPOSIT_AMOUNT;
+  const depositAmount = Math.ceil(totalPrice * 0.1);
   const pickupTime = pickupDate ? combinePickupDateTime(pickupDate, pickupHour) : "";
 
   useEffect(() => {
     if (step === "SUCCESS") {
-      window.localStorage.removeItem(PICKUP_DRAFT_STORAGE_KEY);
+      window.localStorage.removeItem(CHECKOUT_DRAFT_STORAGE_KEY);
       return;
     }
 
-    const draft: PickupDraft = {
+    const draft: CheckoutDraft = {
       step,
+      fulfillmentType,
       selectedBranch,
       pickupDate: pickupDate ? formatPickupDate(pickupDate) : "",
       pickupHour,
+      deliveryLocation,
       momoPhone,
     };
-    window.localStorage.setItem(PICKUP_DRAFT_STORAGE_KEY, JSON.stringify(draft));
-  }, [momoPhone, pickupDate, pickupHour, selectedBranch, step]);
+    window.localStorage.setItem(CHECKOUT_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  }, [deliveryLocation, fulfillmentType, momoPhone, pickupDate, pickupHour, selectedBranch, step]);
 
   const resetPickupDraft = () => {
-    const fallback = getDefaultPickupDraft();
+    const fallback = getDefaultCheckoutDraft();
     setStep("CART");
+    setFulfillmentType(fallback.fulfillmentType);
     setSelectedBranch(fallback.selectedBranch);
     setPickupDate(parseStoredPickupDate(fallback.pickupDate));
     setPickupHour(fallback.pickupHour);
+    setDeliveryLocation(fallback.deliveryLocation);
     setMomoPhone(fallback.momoPhone);
     setRecentOrder(null);
     setShowRatingPrompt(false);
     setRatingValue(5);
     setRatingComment("");
-    window.localStorage.removeItem(PICKUP_DRAFT_STORAGE_KEY);
+    window.localStorage.removeItem(CHECKOUT_DRAFT_STORAGE_KEY);
   };
 
   const closeDrawer = () => {
@@ -249,7 +266,7 @@ const CartDrawer = () => {
 
     setIsSubmittingRating(true);
     try {
-      const res = await fetch(`/api/user/orders/${recentOrder.id}/branch-review`, {
+      const res = await fetch(buildApiUrl(`/api/user/orders/${recentOrder.id}/branch-review`), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -282,25 +299,34 @@ const CartDrawer = () => {
     }
 
     if (step === "BRANCH") {
-      if (!selectedBranch || !pickupTime) return toast.error(t("pickup.select_branch_time"));
-      const pickupTimeError = validatePickupSelection(pickupDate, pickupHour);
-      if (pickupTimeError) return toast.error(getPickupValidationMessage(pickupTimeError, t));
+      if (fulfillmentType === "pickup") {
+        if (!selectedBranch || !pickupTime) return toast.error(t("pickup.select_branch_time"));
+        const pickupTimeError = validatePickupSelection(pickupDate, pickupHour);
+        if (pickupTimeError) return toast.error(getPickupValidationMessage(pickupTimeError, t));
+      } else if (!deliveryLocation.trim()) {
+        return toast.error(t("checkout.enter_delivery_location"));
+      }
       setStep("DEPOSIT");
       return;
     }
 
     if (step === "DEPOSIT") {
-      const pickupTimeError = validatePickupSelection(pickupDate, pickupHour);
-      if (pickupTimeError) {
+      if (fulfillmentType === "pickup") {
+        const pickupTimeError = validatePickupSelection(pickupDate, pickupHour);
+        if (pickupTimeError) {
+          setStep("BRANCH");
+          return toast.error(getPickupValidationMessage(pickupTimeError, t));
+        }
+      } else if (!deliveryLocation.trim()) {
         setStep("BRANCH");
-        return toast.error(getPickupValidationMessage(pickupTimeError, t));
+        return toast.error(t("checkout.enter_delivery_location"));
       }
 
       if (!momoPhone.trim()) return toast.error(t("pickup.enter_momo"));
 
       setIsProcessing(true);
       try {
-        const res = await fetch("/api/user/orders", {
+        const res = await fetch(buildApiUrl("/api/user/orders"), {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -309,36 +335,28 @@ const CartDrawer = () => {
           body: JSON.stringify({
             total: totalPrice,
             items: JSON.stringify(items),
-            fulfillment_type: "pickup",
-            pickup_branch: selectedBranch,
-            pickup_time: pickupTime,
-            deposit_amount: depositAmount,
+            fulfillment_type: fulfillmentType,
+            pickup_branch: fulfillmentType === "pickup" ? selectedBranch : undefined,
+            pickup_time: fulfillmentType === "pickup" ? pickupTime : undefined,
+            delivery_location: fulfillmentType === "delivery" ? deliveryLocation.trim() : undefined,
             deposit_method: `MTN MoMo ${momoPhone.trim()}`,
           }),
         });
 
         if (!res.ok) {
-          let message = t("cart.order_failed");
-          try {
-            const data = await res.json();
-            if (typeof data?.detail === "string") {
-              message = data.detail;
-            }
-          } catch {
-            // Fall back to the generic message when the response is not JSON.
-          }
+          const message = await readErrorMessage(res, t("cart.order_failed"));
           throw new Error(message);
         }
 
-        const createdOrder = await res.json();
+        const createdOrder = await readJsonResponse<CreatedOrder>(res, t("cart.order_failed"));
 
         setStep("SUCCESS");
         setRecentOrder(createdOrder);
-        setShowRatingPrompt(true);
+        setShowRatingPrompt((createdOrder.fulfillment_type ?? fulfillmentType) === "pickup");
         setRatingValue(5);
         setRatingComment("");
         clearCart();
-        refreshProfile();
+        await refreshProfile();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : t("cart.order_failed"));
       } finally {
@@ -374,7 +392,7 @@ const CartDrawer = () => {
             </div>
             <div>
               <h3 className="font-black text-lg text-white tracking-tighter uppercase">
-                {step === "CART" ? t("cart.header_cart") : step === "BRANCH" ? t("pickup.header_branch") : step === "DEPOSIT" ? t("pickup.header_deposit") : t("cart.header_confirmed")}
+                {step === "CART" ? t("cart.header_cart") : step === "BRANCH" ? t("checkout.header_fulfillment") : step === "DEPOSIT" ? t("pickup.header_deposit") : t("cart.header_confirmed")}
               </h3>
               <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest leading-none mt-0.5">
                 {step === "SUCCESS" ? t("pickup.order_success") : `${totalItems} ${t("cart.items_in_bag")}`}
@@ -431,66 +449,105 @@ const CartDrawer = () => {
             <div className="space-y-5">
               <div className="rounded-3xl border border-primary/20 bg-primary/10 p-5">
                 <div className="flex items-center gap-3 mb-2">
-                  <Store className="w-5 h-5 text-primary" />
-                  <h4 className="text-sm font-black text-white">{t("pickup.choose_branch")}</h4>
+                  <Truck className="w-5 h-5 text-primary" />
+                  <h4 className="text-sm font-black text-white">{t("checkout.choose_fulfillment")}</h4>
                 </div>
-                <p className="text-xs text-gray-400 leading-relaxed">{t("pickup.branch_desc")}</p>
+                <p className="text-xs text-gray-400 leading-relaxed">{t("checkout.fulfillment_desc")}</p>
               </div>
 
-              <div className="grid grid-cols-1 gap-2">
-                {BRANCH_NAMES.map((branch) => (
-                  <button
-                    key={branch}
-                    type="button"
-                    onClick={() => setSelectedBranch(branch)}
-                    className={`text-left p-4 rounded-2xl border transition-all ${selectedBranch === branch ? "bg-primary/10 border-primary/40 text-white" : "bg-white/[0.03] border-white/5 text-gray-400 hover:border-white/10"}`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <MapPin className={`w-4 h-4 ${selectedBranch === branch ? "text-primary" : "text-gray-600"}`} />
-                      <div className="flex-1">
-                        <span className="text-sm font-bold">{branch}</span>
-                        <p className="text-[10px] text-gray-500 mt-0.5">
-                          ★ {(ratingByBranch[branch]?.average_rating || 4.6).toFixed(1)}
-                          {ratingByBranch[branch]?.review_count ? ` (${ratingByBranch[branch].review_count})` : " (new)"}
-                        </p>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setFulfillmentType("pickup")}
+                  className={`rounded-2xl border p-4 text-left transition-all ${fulfillmentType === "pickup" ? "bg-primary/10 border-primary/40 text-white" : "bg-white/[0.03] border-white/5 text-gray-400 hover:border-white/10"}`}
+                >
+                  <Store className={`mb-3 h-5 w-5 ${fulfillmentType === "pickup" ? "text-primary" : "text-gray-600"}`} />
+                  <p className="text-sm font-bold">{t("checkout.fulfillment_pickup")}</p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-gray-500">{t("checkout.fulfillment_pickup_desc")}</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFulfillmentType("delivery")}
+                  className={`rounded-2xl border p-4 text-left transition-all ${fulfillmentType === "delivery" ? "bg-primary/10 border-primary/40 text-white" : "bg-white/[0.03] border-white/5 text-gray-400 hover:border-white/10"}`}
+                >
+                  <Truck className={`mb-3 h-5 w-5 ${fulfillmentType === "delivery" ? "text-primary" : "text-gray-600"}`} />
+                  <p className="text-sm font-bold">{t("checkout.fulfillment_delivery")}</p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-gray-500">{t("checkout.fulfillment_delivery_desc")}</p>
+                </button>
+              </div>
+
+              {fulfillmentType === "pickup" ? (
+                <>
+                  <div className="grid grid-cols-1 gap-2">
+                    {BRANCH_NAMES.map((branch) => (
+                      <button
+                        key={branch}
+                        type="button"
+                        onClick={() => setSelectedBranch(branch)}
+                        className={`text-left p-4 rounded-2xl border transition-all ${selectedBranch === branch ? "bg-primary/10 border-primary/40 text-white" : "bg-white/[0.03] border-white/5 text-gray-400 hover:border-white/10"}`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <MapPin className={`w-4 h-4 ${selectedBranch === branch ? "text-primary" : "text-gray-600"}`} />
+                          <div className="flex-1">
+                            <span className="text-sm font-bold">{branch}</span>
+                            <p className="text-[10px] text-gray-500 mt-0.5">
+                              ★ {(ratingByBranch[branch]?.average_rating || 4.6).toFixed(1)}
+                              {ratingByBranch[branch]?.review_count ? ` (${ratingByBranch[branch].review_count})` : " (new)"}
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="space-y-3 pt-2">
+                    <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{t("pickup.pickup_time")}</h4>
+                    <div className="rounded-2xl border border-white/5 bg-white/[0.03] p-4">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1.2fr_0.8fr]">
+                        <div className="relative">
+                          <CalendarIcon className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+                          <input
+                            type="date"
+                            value={pickupDateValue}
+                            min={todayValue}
+                            max={tomorrowValue}
+                            onChange={(e) => setPickupDate(parseStoredPickupDate(e.target.value))}
+                            className="w-full rounded-xl border border-white/10 bg-white/[0.05] py-3 pl-11 pr-4 text-sm font-bold text-white focus:outline-none focus:border-primary/50"
+                          />
+                        </div>
+
+                        <div className="relative">
+                          <Clock className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+                          <input
+                            type="time"
+                            value={pickupHour}
+                            onChange={(e) => setPickupHour(e.target.value)}
+                            min={timeMin}
+                            max={timeMax}
+                            step={60}
+                            className="w-full rounded-xl border border-white/10 bg-white/[0.05] py-3 pl-11 pr-4 text-sm font-bold text-white placeholder:text-gray-600 focus:outline-none focus:border-primary/50"
+                          />
+                        </div>
                       </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-
-              <div className="space-y-3 pt-2">
-                <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{t("pickup.pickup_time")}</h4>
-                <div className="rounded-2xl border border-white/5 bg-white/[0.03] p-4">
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1.2fr_0.8fr]">
-                    <div className="relative">
-                      <CalendarIcon className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
-                      <input
-                        type="date"
-                        value={pickupDateValue}
-                        min={todayValue}
-                        max={tomorrowValue}
-                        onChange={(e) => setPickupDate(parseStoredPickupDate(e.target.value))}
-                        className="w-full rounded-xl border border-white/10 bg-white/[0.05] py-3 pl-11 pr-4 text-sm font-bold text-white focus:outline-none focus:border-primary/50"
-                      />
-                    </div>
-
-                    <div className="relative">
-                      <Clock className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
-                      <input
-                        type="time"
-                        value={pickupHour}
-                        onChange={(e) => setPickupHour(e.target.value)}
-                        min={timeMin}
-                        max={timeMax}
-                        step={60}
-                        className="w-full rounded-xl border border-white/10 bg-white/[0.05] py-3 pl-11 pr-4 text-sm font-bold text-white placeholder:text-gray-600 focus:outline-none focus:border-primary/50"
-                      />
+                      <p className="mt-3 text-[11px] leading-relaxed text-gray-400">{t("pickup.time_format_hint")}</p>
                     </div>
                   </div>
-                  <p className="mt-3 text-[11px] leading-relaxed text-gray-400">{t("pickup.time_format_hint")}</p>
+                </>
+              ) : (
+                <div className="space-y-3 pt-2">
+                  <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{t("checkout.delivery_location")}</h4>
+                  <div className="rounded-2xl border border-white/5 bg-white/[0.03] p-4">
+                    <textarea
+                      value={deliveryLocation}
+                      onChange={(e) => setDeliveryLocation(e.target.value)}
+                      rows={4}
+                      placeholder={t("checkout.delivery_location_placeholder")}
+                      className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.05] px-4 py-3 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-primary/50"
+                    />
+                    <p className="mt-3 text-[11px] leading-relaxed text-gray-400">{t("checkout.delivery_location_desc")}</p>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
 
@@ -498,19 +555,38 @@ const CartDrawer = () => {
             <div className="space-y-5">
               <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-5 space-y-4">
                 <div className="flex items-start gap-3">
-                  <MapPin className="w-5 h-5 text-primary mt-0.5" />
+                  {fulfillmentType === "pickup" ? <MapPin className="w-5 h-5 text-primary mt-0.5" /> : <Truck className="w-5 h-5 text-primary mt-0.5" />}
                   <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">{t("pickup.branch")}</p>
-                    <p className="text-sm font-bold text-white">{selectedBranch}</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">{t("checkout.method")}</p>
+                    <p className="text-sm font-bold text-white">{fulfillmentType === "pickup" ? t("checkout.fulfillment_pickup") : t("checkout.fulfillment_delivery")}</p>
                   </div>
                 </div>
-                <div className="flex items-start gap-3">
-                  <Clock className="w-5 h-5 text-primary mt-0.5" />
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">{t("pickup.pickup_time")}</p>
-                    <p className="text-sm font-bold text-white">{pickupTime}</p>
+                {fulfillmentType === "pickup" ? (
+                  <>
+                    <div className="flex items-start gap-3">
+                      <MapPin className="w-5 h-5 text-primary mt-0.5" />
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">{t("pickup.branch")}</p>
+                        <p className="text-sm font-bold text-white">{selectedBranch}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <Clock className="w-5 h-5 text-primary mt-0.5" />
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">{t("pickup.pickup_time")}</p>
+                        <p className="text-sm font-bold text-white">{pickupTime}</p>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex items-start gap-3">
+                    <MapPin className="w-5 h-5 text-primary mt-0.5" />
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">{t("checkout.delivery_location")}</p>
+                      <p className="text-sm font-bold text-white whitespace-pre-wrap">{deliveryLocation.trim()}</p>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               <div className="rounded-3xl border border-green-500/20 bg-green-500/10 p-5">
@@ -541,17 +617,30 @@ const CartDrawer = () => {
               <h2 className="text-3xl font-black text-white mb-3 tracking-tighter uppercase">{t("pickup.order_sent")}</h2>
               <p className="text-gray-500 text-sm max-w-[280px] leading-relaxed mb-6">{t("pickup.order_sent_desc")}</p>
               <div className="w-full rounded-2xl border border-white/10 bg-white/[0.03] p-4 mb-8 text-left">
-                <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">{t("pickup.branch")}</p>
-                <p className="text-sm text-white font-bold mb-2">{selectedBranch}</p>
-                <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">{t("pickup.pickup_time")}</p>
-                <p className="text-sm text-white font-bold">{pickupTime}</p>
+                <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">{t("checkout.method")}</p>
+                <p className="text-sm text-white font-bold mb-2">{fulfillmentType === "pickup" ? t("checkout.fulfillment_pickup") : t("checkout.fulfillment_delivery")}</p>
+                {fulfillmentType === "pickup" ? (
+                  <>
+                    <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">{t("pickup.branch")}</p>
+                    <p className="text-sm text-white font-bold mb-2">{recentOrder?.pickup_branch || selectedBranch}</p>
+                    <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">{t("pickup.pickup_time")}</p>
+                    <p className="text-sm text-white font-bold">{recentOrder?.pickup_time || pickupTime}</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">{t("checkout.delivery_location")}</p>
+                    <p className="text-sm text-white font-bold whitespace-pre-wrap">{recentOrder?.delivery_location || deliveryLocation.trim()}</p>
+                  </>
+                )}
               </div>
-              <button
-                onClick={() => setShowRatingPrompt(true)}
-                className="mb-4 w-full rounded-2xl border border-primary/30 bg-primary/10 py-4 font-black uppercase tracking-widest text-xs text-primary transition-all hover:bg-primary/20"
-              >
-                {t("review.rate_now")}
-              </button>
+              {fulfillmentType === "pickup" && (
+                <button
+                  onClick={() => setShowRatingPrompt(true)}
+                  className="mb-4 w-full rounded-2xl border border-primary/30 bg-primary/10 py-4 font-black uppercase tracking-widest text-xs text-primary transition-all hover:bg-primary/20"
+                >
+                  {t("review.rate_now")}
+                </button>
+              )}
               <button onClick={closeDrawer} className="w-full bg-white text-[#08081a] font-black py-4 rounded-2xl hover:bg-gray-200 transition-all uppercase tracking-widest text-xs">
                 {t("cart.back_shopping")}
               </button>
@@ -582,13 +671,13 @@ const CartDrawer = () => {
                 disabled={isProcessing}
                 className="w-full bg-primary text-white py-4 rounded-2xl font-black text-sm hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-xl shadow-primary/20 border border-primary/30"
               >
-                {isProcessing ? t("cart.processing") : step === "CART" ? t("pickup.choose_pickup") : step === "BRANCH" ? t("pickup.continue_deposit") : t("pickup.pay_deposit")}
+                {isProcessing ? t("cart.processing") : step === "CART" ? t("checkout.choose_fulfillment_cta") : step === "BRANCH" ? t("checkout.continue_deposit") : t("checkout.pay_deposit", { amount: formatPrice(depositAmount) })}
                 {!isProcessing && <ChevronRight className="w-4 h-4" />}
               </button>
 
               {step !== "CART" && (
                 <button onClick={goBack} className="w-full py-2 text-[10px] font-black text-gray-600 uppercase tracking-widest hover:text-white transition-colors">
-                  {step === "BRANCH" ? t("cart.go_back_cart") : t("pickup.back_branch")}
+                  {step === "BRANCH" ? t("cart.go_back_cart") : t("checkout.back_fulfillment")}
                 </button>
               )}
             </div>
@@ -597,7 +686,7 @@ const CartDrawer = () => {
               {[
                 { icon: Shield, color: "text-green-500", label: t("trust.ssl_secured") },
                 { icon: Smartphone, color: "text-blue-500", label: "MTN MOMO" },
-                { icon: Store, color: "text-orange-500", label: t("pickup.branch_ready") },
+                { icon: fulfillmentType === "pickup" ? Store : Truck, color: "text-orange-500", label: fulfillmentType === "pickup" ? t("pickup.branch_ready") : t("checkout.delivery_ready") },
               ].map((badge, i) => (
                 <div key={i} className="flex flex-col items-center gap-1.5 opacity-60 hover:opacity-100 transition-opacity">
                   <div className="w-9 h-9 rounded-full bg-white/5 flex items-center justify-center border border-white/10">

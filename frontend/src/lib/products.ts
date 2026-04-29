@@ -1,4 +1,5 @@
 import fallbackCatalog from "@/data/products.json";
+import { buildApiUrl, readJsonResponse } from "@/lib/api";
 
 export interface Product {
   id: number;
@@ -18,7 +19,6 @@ export interface StoreInfo {
   currency: string;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
 const bundledStoreInfo: StoreInfo = fallbackCatalog.store;
 const bundledProducts: Product[] = fallbackCatalog.products;
 const bundledCategories = Array.from(new Set(bundledProducts.map((product) => product.category)));
@@ -29,9 +29,9 @@ const warnAndUseBundledCatalog = (resource: string, error?: unknown) => {
 
 export const fetchStoreInfo = async (): Promise<StoreInfo> => {
   try {
-    const res = await fetch(`${API_BASE_URL}/store`);
+    const res = await fetch(buildApiUrl("/api/store"));
     if (!res.ok) throw new Error(`Failed to fetch store info: ${res.status}`);
-    return res.json();
+    return readJsonResponse<StoreInfo>(res, "Store info response was empty.");
   } catch (error) {
     warnAndUseBundledCatalog("store info", error);
     return bundledStoreInfo;
@@ -56,14 +56,14 @@ export const fetchProducts = async (category?: string, search?: string): Promise
   };
 
   try {
-    let url = `${API_BASE_URL}/products?limit=1000`;
+    let url = buildApiUrl("/api/products?limit=1000");
     if (category) url += `&category=${encodeURIComponent(category)}`;
     if (search) url += `&search=${encodeURIComponent(search)}`;
 
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Failed to fetch products: ${res.status}`);
 
-    const products: Product[] = await res.json();
+    const products = await readJsonResponse<Product[]>(res, "Products response was empty.");
     if (products.length === 0 && bundledProducts.length > 0) {
       warnAndUseBundledCatalog("products");
       return applyFallbackFilters();
@@ -77,10 +77,10 @@ export const fetchProducts = async (category?: string, search?: string): Promise
 
 export const fetchCategories = async (): Promise<string[]> => {
   try {
-    const res = await fetch(`${API_BASE_URL}/categories`);
+    const res = await fetch(buildApiUrl("/api/categories"));
     if (!res.ok) throw new Error(`Failed to fetch categories: ${res.status}`);
 
-    const categories: string[] = await res.json();
+    const categories = await readJsonResponse<string[]>(res, "Categories response was empty.");
     if (categories.length === 0 && bundledCategories.length > 0) {
       warnAndUseBundledCatalog("categories");
       return bundledCategories;
