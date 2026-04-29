@@ -17,6 +17,7 @@ import CartDrawer from "@/components/CartDrawer";
 import ChatWidget from "@/components/ChatWidget";
 import { useCart } from "@/contexts/CartContext";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { readErrorMessage, readJsonResponse } from "@/lib/api";
 import { formatPrice } from "@/lib/products";
 import {
   BRANCH_LOCATIONS,
@@ -336,14 +337,14 @@ const BranchesPage = () => {
     );
   };
 
-  const { data: stock = [], isLoading } = useQuery<BranchStock[]>({
+  const { data: stock = [], isLoading, error: stockError } = useQuery<BranchStock[]>({
     queryKey: ["customer-branch-stock", activeBranch.name, stockSearch],
     queryFn: async () => {
       const params = new URLSearchParams({ branch: activeBranch.name });
       if (stockSearch.trim()) params.set("search", stockSearch.trim());
-      const res = await fetch(`/api/branch/stock?${params.toString()}`);
-      if (!res.ok) throw new Error("Failed to fetch branch stock");
-      return res.json();
+      const res = await fetch(`/api/branches/stock?${params.toString()}`);
+      if (!res.ok) throw new Error(await readErrorMessage(res, "Failed to fetch branch stock"));
+      return readJsonResponse<BranchStock[]>(res, "Branch stock response was empty.");
     },
   });
 
@@ -964,6 +965,10 @@ const BranchesPage = () => {
               {isLoading ? (
                 <div className="rounded-2xl border border-dashed border-border/50 bg-background/60 p-10 text-center text-sm font-bold text-muted-foreground">
                   {t("branches.loading_inventory")}
+                </div>
+              ) : stockError ? (
+                <div className="rounded-2xl border border-dashed border-red-500/30 bg-red-500/5 p-10 text-center text-sm font-bold text-red-300">
+                  {stockError instanceof Error ? stockError.message : "Failed to load branch inventory."}
                 </div>
               ) : topInventory.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-border/50 bg-background/60 p-10 text-center text-sm font-bold text-muted-foreground">

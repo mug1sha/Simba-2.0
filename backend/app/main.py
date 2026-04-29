@@ -66,6 +66,16 @@ def read_store(db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Store info not found")
     return store
 
+@app.get("/api/branches/stock", response_model=List[schemas.BranchStock], tags=["Catalog"])
+def read_public_branch_stock(
+    branch: str,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    if branch not in crud.SIMBA_BRANCHES:
+        raise HTTPException(status_code=400, detail="Unknown branch")
+    return crud.get_branch_stock(db, branch=branch, search=search)
+
 # --- AUTHENTICATION ---
 @app.post("/api/auth/register", response_model=schemas.AuthActionResponse, tags=["Auth"])
 def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
