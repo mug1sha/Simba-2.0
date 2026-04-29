@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { readJsonResponse } from "@/lib/api";
 
 interface OrderCardProps {
   order: any;
@@ -64,7 +65,7 @@ const OrderCard = ({ order, onCancel }: OrderCardProps) => {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) return;
-        const data = await res.json();
+        const data = await readJsonResponse<any>(res, "Branch review response was empty.");
         if (!cancelled && data) {
           setReviewed(true);
           if (typeof data.rating === "number") setReviewRating(data.rating);

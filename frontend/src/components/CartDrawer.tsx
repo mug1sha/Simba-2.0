@@ -8,6 +8,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BRANCH_NAMES } from "@/lib/branches";
 import { motion, AnimatePresence } from "framer-motion";
+import { readJsonResponse } from "@/lib/api";
 
 type CheckoutStep = "CART" | "BRANCH" | "DEPOSIT" | "SUCCESS";
 type PersistedCheckoutStep = Exclude<CheckoutStep, "SUCCESS">;
@@ -194,7 +195,7 @@ const CartDrawer = () => {
     queryFn: async () => {
       const res = await fetch("/api/branches/ratings");
       if (!res.ok) return [];
-      return res.json();
+      return readJsonResponse<any[]>(res, "Branch ratings response was empty.");
     },
   });
 
