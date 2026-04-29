@@ -26,6 +26,7 @@ SIMBA_BRANCHES = [
     "Simba Rebero",
     "Simba Centenary",
 ]
+BRANCH_PRODUCTS_PER_CATEGORY = 5
 PICKUP_DEPOSIT_AMOUNT = 500
 SEARCH_STOPWORDS = {
     "a", "an", "and", "any", "are", "about", "at", "can", "could", "do", "does", "for", "from", "have",
@@ -165,34 +166,101 @@ def get_product(db: Session, product_id: int):
     """Fetch a single product by its unique ID."""
     return db.query(models.Product).filter(models.Product.id == product_id).first()
 
-def seed_branch_stock(db: Session, default_count: int = 20):
-    """Create a starting stock row for every product at every Simba branch."""
+def _build_branch_stock_plan(products: list[models.Product], products_per_category: int = BRANCH_PRODUCTS_PER_CATEGORY):
+    branch_count = len(SIMBA_BRANCHES)
+    plan: dict[str, dict[int, int]] = {branch: {} for branch in SIMBA_BRANCHES}
+    products_by_category: dict[str, list[models.Product]] = {}
+
+    for product in sorted(products, key=lambda item: (item.category, item.name, item.id)):
+        if not product.inStock:
+            continue
+        products_by_category.setdefault(product.category, []).append(product)
+
+    for category_index, category in enumerate(sorted(products_by_category)):
+        category_products = products_by_category[category]
+        if not category_products:
+            continue
+
+        target_count = min(products_per_category, len(category_products))
+        primary_buckets = {index: [] for index in range(branch_count)}
+        for product_index, product in enumerate(category_products):
+            primary_buckets[product_index % branch_count].append(product)
+
+        for branch_index, branch in enumerate(SIMBA_BRANCHES):
+            selected: list[models.Product] = []
+            seen_product_ids: set[int] = set()
+
+            for product in primary_buckets[branch_index]:
+                if len(selected) >= target_count:
+                    break
+                selected.append(product)
+                seen_product_ids.add(product.id)
+
+            cursor = (branch_index * products_per_category + category_index) % len(category_products)
+            while len(selected) < target_count:
+                candidate = category_products[cursor % len(category_products)]
+                cursor += 1
+                if candidate.id in seen_product_ids:
+                    continue
+                selected.append(candidate)
+                seen_product_ids.add(candidate.id)
+
+            for slot, product in enumerate(selected):
+                plan[branch][product.id] = 6 + ((branch_index * 7 + category_index * 3 + slot + product.id) % 19)
+
+    return plan
+
+def _branch_stock_requires_initialization(db: Session, current_branches: set[str], total_products: int):
+    rows = db.query(models.BranchStock).all()
+    if not rows:
+        return True
+
+    branch_names = {row.branch for row in rows}
+    if branch_names - current_branches:
+        return True
+    if current_branches - branch_names:
+        return True
+
+    positive_by_branch: dict[str, list[int]] = {branch: [] for branch in current_branches}
+    for row in rows:
+        if (row.stock_count or 0) > 0 and row.branch in positive_by_branch:
+            positive_by_branch[row.branch].append(row.product_id)
+
+    if any(len(product_ids) >= total_products - 1 for product_ids in positive_by_branch.values()):
+        return True
+
+    signatures = {tuple(sorted(product_ids)) for product_ids in positive_by_branch.values()}
+    return len(signatures) != len(current_branches)
+
+def seed_branch_stock(db: Session):
+    """Initialize branch-specific inventory using a branch-distinct slice of the catalog."""
     products = db.query(models.Product).all()
     if not products:
         return
 
-    existing_pairs = {
-        (row.branch, row.product_id)
-        for row in db.query(models.BranchStock.branch, models.BranchStock.product_id).all()
-    }
+    current_branches = set(SIMBA_BRANCHES)
+    if not _branch_stock_requires_initialization(db, current_branches=current_branches, total_products=len(products)):
+        return
+
+    plan = _build_branch_stock_plan(products)
     now = str(datetime.utcnow())
-    created = 0
+    db.query(models.BranchStock).delete()
+
     for branch in SIMBA_BRANCHES:
-        for product in products:
-            if (branch, product.id) in existing_pairs:
-                continue
+        for product_id, stock_count in plan[branch].items():
             db.add(models.BranchStock(
                 branch=branch,
-                product_id=product.id,
-                stock_count=default_count if product.inStock else 0,
+                product_id=product_id,
+                stock_count=stock_count,
                 updated_at=now,
             ))
-            created += 1
-    if created:
-        db.commit()
 
-def get_branch_stock(db: Session, branch: str, search: str = None, limit: int = 80):
+    db.commit()
+
+def get_branch_stock(db: Session, branch: str, search: str = None, limit: int = 80, in_stock_only: bool = False):
     query = db.query(models.BranchStock).join(models.Product).filter(models.BranchStock.branch == branch)
+    if in_stock_only:
+        query = query.filter(models.BranchStock.stock_count > 0)
     if search:
         for word in extract_search_keywords(search):
             query = query.filter(or_(

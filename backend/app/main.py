@@ -74,7 +74,7 @@ def read_public_branch_stock(
 ):
     if branch not in crud.SIMBA_BRANCHES:
         raise HTTPException(status_code=400, detail="Unknown branch")
-    return crud.get_branch_stock(db, branch=branch, search=search)
+    return crud.get_branch_stock(db, branch=branch, search=search, in_stock_only=True)
 
 # --- AUTHENTICATION ---
 @app.post("/api/auth/register", response_model=schemas.AuthActionResponse, tags=["Auth"])
@@ -442,7 +442,7 @@ def branch_stock(
     db: Session = Depends(get_db),
     user: models.User = Depends(auth.require_roles(auth.ROLE_BRANCH_MANAGER)),
 ):
-    return crud.get_branch_stock(db, branch=user.branch, search=search)
+    return crud.get_branch_stock(db, branch=user.branch, search=search, in_stock_only=True)
 
 @app.post("/api/branch/stock/{product_id}/out-of-stock", response_model=schemas.BranchStock, tags=["Branch Operations"])
 def branch_mark_out_of_stock(
