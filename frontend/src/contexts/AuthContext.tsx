@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
+import { readJsonResponse } from "@/lib/api";
 
 interface User {
   id: number;
@@ -55,7 +56,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         headers: { Authorization: `Bearer ${activeToken}` }
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await readJsonResponse<User>(res, "Profile response was empty.");
         setUser(data);
         return data;
       } else {
