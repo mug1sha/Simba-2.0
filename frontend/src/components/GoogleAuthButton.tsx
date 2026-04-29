@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { readErrorMessage } from "@/lib/api";
+import { readErrorMessage, readJsonResponse } from "@/lib/api";
 
 type GoogleAuthIntent = "login" | "signup";
 
@@ -82,7 +82,7 @@ const GoogleAuthButton = ({ intent, onSuccess, onError }: GoogleAuthButtonProps)
             }),
           });
           if (!res.ok) throw new Error(await readErrorMessage(res, "Google authentication failed"));
-          const data = await res.json();
+          const data = await readJsonResponse(res, "Google login failed: server returned an empty response.");
           await onSuccess(data);
         } catch (error) {
           onError(error instanceof Error ? error.message : "Google authentication failed");

@@ -5,7 +5,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { Lock, Eye, EyeOff, CheckCircle2, ShoppingBag, XCircle } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getRoleDashboardPath } from "@/lib/auth";
-import { readErrorMessage } from "@/lib/api";
+import { readErrorMessage, readJsonResponse } from "@/lib/api";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { BRANCH_NAMES } from "@/lib/branches";
 
@@ -87,7 +87,7 @@ export const AuthFlowPage = () => {
     try {
       const res = await fetch(`/api/auth/invites/${encodeURIComponent(token || "")}`);
       if (!res.ok) throw new Error(await readErrorMessage(res, "Invite link not found"));
-      const data = await res.json();
+      const data = await readJsonResponse(res, "Invite link response was empty.");
       setInvitePreview(data);
       if (data.email) {
         setEmail(data.email);
@@ -168,7 +168,7 @@ export const AuthFlowPage = () => {
         }),
       });
       if (!res.ok) throw new Error(await readErrorMessage(res, "Invite acceptance failed"));
-      const data = await res.json();
+      const data = await readJsonResponse(res, "Invite acceptance failed: server returned an empty response.");
       const nextUser = await login(data);
       toast({
         title: t("auth.flow.account_ready"),

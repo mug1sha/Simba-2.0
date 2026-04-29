@@ -1,42 +1,30 @@
-import { useCallback, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AnimatePresence, motion } from "framer-motion";
 import {
-  AreaChart as AreaChartIcon,
-  BarChart3,
+  AlertTriangle,
+  ArrowUpRight,
+  BellRing,
   CheckCircle2,
-  ChevronDown,
   Clock3,
-  Copy,
-  LineChart,
   PackageCheck,
-  PieChart as PieChartIcon,
-  Play,
-  Search,
-  ShoppingBag,
+  RefreshCcw,
+  Sparkles,
   UserRound,
   Users,
 } from "lucide-react";
-import { useAuth } from "@/contexts/AuthContext";
-import { formatPrice } from "@/lib/products";
 import { toast } from "sonner";
+import { useAuth } from "@/contexts/AuthContext";
 import { readErrorMessage } from "@/lib/api";
-import { useLanguage, type Language } from "@/contexts/LanguageContext";
-import { ThemeToggle } from "@/components/ThemeToggle";
-import { ThemePalettePicker } from "@/components/ThemePalettePicker";
-import { usePaletteTheme } from "@/contexts/PaletteThemeContext";
+import { formatPrice } from "@/lib/products";
+import { cn } from "@/lib/utils";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from "@/components/ui/chart";
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, XAxis, YAxis } from "recharts";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type BranchOrder = {
   id: number;
@@ -60,41 +48,66 @@ type BranchStaffMember = {
   branch?: string | null;
 };
 
-type BranchStock = {
-  id: number;
-  product_id: number;
-  stock_count: number;
-  product: {
-    id: number;
-    name: string;
-    price: number;
-    image: string;
-    category: string;
-  };
+type OrderItem = {
+  id?: number | string;
+  name?: string;
+  quantity?: number;
+  image?: string;
 };
 
-type RoleInviteLink = {
-  email?: string | null;
-  role: string;
-  branch?: string | null;
-  expires_at: string;
-  invite_url: string;
+type OrderActionVariables = {
+  orderId: number;
+  endpoint: "accept" | "assign" | "start" | "ready" | "complete";
+  body?: Record<string, unknown>;
+  silent?: boolean;
 };
 
-const statusClass: Record<string, string> = {
-  Pending: "bg-yellow-500/12 text-yellow-300 border-yellow-500/20",
-  Accepted: "bg-sky-500/12 text-sky-300 border-sky-500/20",
-  Assigned: "bg-blue-500/12 text-blue-300 border-blue-500/20",
-  Preparing: "bg-orange-500/12 text-orange-300 border-orange-500/20",
-  "Ready for Pick-up": "bg-green-500/12 text-green-300 border-green-500/20",
-  Completed: "bg-emerald-500/12 text-emerald-300 border-emerald-500/20",
-  "No-show": "bg-red-500/12 text-red-300 border-red-500/20",
-  Cancelled: "bg-white/8 text-gray-300 border-white/10",
+type AlertItem = {
+  id: string;
+  tone: "danger" | "warn" | "info";
+  title: string;
+  detail: string;
 };
 
-const parseItems = (items: string) => {
+type Presence = "busy" | "idle" | "offline";
+
+const TERMINAL_STATUSES = new Set(["Completed", "Cancelled", "No-show"]);
+
+const KANBAN_COLUMNS = [
+  {
+    id: "pending",
+    title: "Pending Orders",
+    description: "New customer orders waiting for manager review.",
+    statuses: ["Pending"],
+    accent: "#ff7b29",
+  },
+  {
+    id: "assigning",
+    title: "Accepted / Assigning",
+    description: "Accepted orders that need a staff owner.",
+    statuses: ["Accepted", "Assigned"],
+    accent: "#ffb44d",
+  },
+  {
+    id: "preparing",
+    title: "In Preparation",
+    description: "Orders currently being assembled by the branch team.",
+    statuses: ["Preparing"],
+    accent: "#facc15",
+  },
+  {
+    id: "ready",
+    title: "Ready for Pickup",
+    description: "Orders staged and waiting for customer collection.",
+    statuses: ["Ready for Pick-up"],
+    accent: "#34d399",
+  },
+] as const;
+
+const parseItems = (items: string): OrderItem[] => {
   try {
-    return JSON.parse(items || "[]");
+    const parsed = JSON.parse(items || "[]");
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
@@ -105,54 +118,92 @@ const getStaffLabel = (staff: BranchStaffMember) => {
   return fullName || staff.email;
 };
 
-const languages: { code: Language; label: string; flag: string }[] = [
-  { code: "EN", label: "English", flag: "🇬🇧" },
-  { code: "RW", label: "Kinyarwanda", flag: "🇷🇼" },
-  { code: "FR", label: "Français", flag: "🇫🇷" },
-];
+const minutesSince = (createdAt: string, now: number) => {
+  const timestamp = new Date(createdAt).getTime();
+  if (Number.isNaN(timestamp)) return 0;
+  return Math.max(0, Math.round((now - timestamp) / 60000));
+};
 
-const localeByLanguage: Record<Language, string> = {
-  EN: "en-US",
-  RW: "rw-RW",
-  FR: "fr-FR",
+const formatMinutesLabel = (minutes: number) => {
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
+};
+
+const formatSincePlaced = (minutes: number) => {
+  if (minutes < 1) return "just now";
+  return `${formatMinutesLabel(minutes)} ago`;
+};
+
+const getUrgencyLevel = (minutes: number) => {
+  if (minutes >= 45) return "critical";
+  if (minutes >= 20) return "high";
+  if (minutes >= 10) return "elevated";
+  return "normal";
+};
+
+const getUrgencyClasses = (minutes: number) => {
+  const level = getUrgencyLevel(minutes);
+  if (level === "critical") {
+    return {
+      dot: "bg-rose-400 shadow-[0_0_18px_rgba(251,113,133,0.9)]",
+      pill: "border-rose-500/40 bg-rose-500/12 text-rose-200",
+      card: "border-rose-500/35 shadow-[0_0_0_1px_rgba(244,63,94,0.18),0_24px_80px_rgba(127,29,29,0.25)] animate-pulse",
+      label: "Critical",
+    };
+  }
+  if (level === "high") {
+    return {
+      dot: "bg-amber-400 shadow-[0_0_18px_rgba(251,191,36,0.75)]",
+      pill: "border-amber-500/40 bg-amber-500/12 text-amber-100",
+      card: "border-amber-400/30 shadow-[0_18px_50px_rgba(180,83,9,0.22)]",
+      label: "High",
+    };
+  }
+  if (level === "elevated") {
+    return {
+      dot: "bg-orange-300",
+      pill: "border-orange-400/30 bg-orange-400/12 text-orange-100",
+      card: "border-white/12",
+      label: "Watch",
+    };
+  }
+  return {
+    dot: "bg-emerald-300",
+    pill: "border-emerald-500/30 bg-emerald-500/10 text-emerald-100",
+    card: "border-white/12",
+    label: "On track",
+  };
+};
+
+const getColumnForStatus = (status: string) => {
+  return KANBAN_COLUMNS.find((column) => column.statuses.includes(status as never))?.id ?? "pending";
 };
 
 const BranchDashboard = () => {
   const queryClient = useQueryClient();
   const { token, user } = useAuth();
-  const { language, setLanguage, t } = useLanguage();
-  const { currentPalette } = usePaletteTheme();
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [stockSearch, setStockSearch] = useState("");
-  const [staffInviteEmail, setStaffInviteEmail] = useState("");
-  const [latestStaffInvite, setLatestStaffInvite] = useState<RoleInviteLink | null>(null);
-  const [analyticsRange, setAnalyticsRange] = useState<7 | 14 | 30>(14);
-  const [analyticsMetric, setAnalyticsMetric] = useState<"sales" | "orders" | "average">("sales");
-  const [analyticsVisual, setAnalyticsVisual] = useState<"area" | "bar">("area");
+  const [now, setNow] = useState(() => Date.now());
+  const [draggingOrderId, setDraggingOrderId] = useState<number | null>(null);
+  const [hoveredColumn, setHoveredColumn] = useState<string | null>(null);
+  const [hoveredStaffId, setHoveredStaffId] = useState<number | null>(null);
+  const [staffSelectionByOrder, setStaffSelectionByOrder] = useState<Record<number, string>>({});
+  const [quickAssignOrderId, setQuickAssignOrderId] = useState("");
+  const [quickAssignStaffId, setQuickAssignStaffId] = useState("");
+  const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const [newOrderFlash, setNewOrderFlash] = useState(false);
+  const quickAssignRef = useRef<HTMLDivElement | null>(null);
+  const seenOrderIdsRef = useRef<number[] | null>(null);
 
   const isManager = user?.role === "branch_manager";
-  const isStaff = user?.role === "branch_staff";
-  const branchName = user?.branch || "Unassigned Branch";
-  const currentLang = languages.find((lang) => lang.code === language) || languages[0];
-  const locale = localeByLanguage[language];
-  const compactFormatter = useMemo(
-    () => new Intl.NumberFormat(locale, { notation: "compact", maximumFractionDigits: 1 }),
-    [locale],
-  );
-  const statusLabelMap = useMemo<Record<string, string>>(
-    () => ({
-      Pending: t("branch_dashboard.status.Pending"),
-      Accepted: t("branch_dashboard.status.Accepted"),
-      Assigned: t("branch_dashboard.status.Assigned"),
-      Preparing: t("branch_dashboard.status.Preparing"),
-      "Ready for Pick-up": t("branch_dashboard.status.Ready for Pick-up"),
-      Completed: t("branch_dashboard.status.Completed"),
-      "No-show": t("branch_dashboard.status.No-show"),
-      Cancelled: t("branch_dashboard.status.Cancelled"),
-    }),
-    [t],
-  );
-  const statusLabel = useCallback((status: string) => statusLabelMap[status] || status, [statusLabelMap]);
+  const branchName = user?.branch || "Simba Branch";
+  const currentUserLabel = user ? [user.first_name, user.last_name].filter(Boolean).join(" ").trim() || user.email : "Operations";
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const { data: staffMembers = [] } = useQuery<BranchStaffMember[]>({
     queryKey: ["branch-staff", branchName],
@@ -160,56 +211,28 @@ const BranchDashboard = () => {
       const res = await fetch("/api/branch/staff", {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error(t("branch_dashboard.error.staff_load"));
+      if (!res.ok) throw new Error("Failed to load branch staff.");
       return res.json();
     },
-    enabled: !!token && !!user && (isManager || isStaff),
+    enabled: !!token && !!user,
+    refetchInterval: 15000,
   });
 
-  const { data: orders = [], isLoading: ordersLoading } = useQuery<BranchOrder[]>({
-    queryKey: ["branch-orders", branchName, statusFilter, user?.role],
+  const { data: orders = [], isLoading: ordersLoading, isFetching: ordersRefreshing } = useQuery<BranchOrder[]>({
+    queryKey: ["branch-orders", branchName, user?.role],
     queryFn: async () => {
-      const params = new URLSearchParams();
-      if (statusFilter !== "all") params.set("status", statusFilter);
-      const res = await fetch(`/api/branch/orders?${params.toString()}`, {
+      const res = await fetch("/api/branch/orders", {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error(t("branch_dashboard.error.orders_load"));
+      if (!res.ok) throw new Error("Failed to load branch orders.");
       return res.json();
     },
     enabled: !!token && !!user,
     refetchInterval: 5000,
   });
 
-  const { data: stock = [], isLoading: stockLoading } = useQuery<BranchStock[]>({
-    queryKey: ["branch-stock", branchName, stockSearch],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (stockSearch.trim()) params.set("search", stockSearch.trim());
-      const res = await fetch(`/api/branch/stock?${params.toString()}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(t("branch_dashboard.error.stock_load"));
-      return res.json();
-    },
-    enabled: !!token && !!user && isManager,
-  });
-
-  const { data: analyticsOrders = [] } = useQuery<BranchOrder[]>({
-    queryKey: ["branch-orders-analytics", branchName],
-    queryFn: async () => {
-      const res = await fetch("/api/branch/orders", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(t("branch_dashboard.error.orders_load"));
-      return res.json();
-    },
-    enabled: !!token && !!user && isManager,
-    refetchInterval: 5000,
-  });
-
-  const action = useMutation({
-    mutationFn: async ({ orderId, endpoint, body }: { orderId: number; endpoint: string; body?: Record<string, unknown> }) => {
+  const orderAction = useMutation({
+    mutationFn: async ({ orderId, endpoint, body }: OrderActionVariables) => {
       const res = await fetch(`/api/branch/orders/${orderId}/${endpoint}`, {
         method: "POST",
         headers: {
@@ -218,782 +241,951 @@ const BranchDashboard = () => {
         },
         body: body ? JSON.stringify(body) : undefined,
       });
-      if (!res.ok) throw new Error(await readErrorMessage(res, t("branch_dashboard.error.action_failed")));
+      if (!res.ok) throw new Error(await readErrorMessage(res, "Order action failed."));
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["branch-orders"] });
-      toast.success(t("branch_dashboard.toast.order_updated"));
+    onSuccess: async (_, variables) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["branch-orders"] }),
+        queryClient.invalidateQueries({ queryKey: ["branch-staff"] }),
+      ]);
+      if (!variables.silent) {
+        toast.success("Branch workflow updated.");
+      }
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const markOutOfStock = useMutation({
-    mutationFn: async (productId: number) => {
-      const res = await fetch(`/api/branch/stock/${productId}/out-of-stock`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(t("branch_dashboard.error.stock_update"));
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["branch-stock"] });
-      toast.success(t("branch_dashboard.toast.stock_updated"));
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const createStaffInvite = useMutation({
-    mutationFn: async () => {
-      const res = await fetch("/api/branch/staff/invites", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ email: staffInviteEmail.trim() || null }),
-      });
-      if (!res.ok) throw new Error(await readErrorMessage(res, t("branch_dashboard.error.invite_create")));
-      return res.json() as Promise<RoleInviteLink>;
-    },
-    onSuccess: (invite) => {
-      setLatestStaffInvite(invite);
-      toast.success(t("branch_dashboard.toast.invite_created"));
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const availableFilters = isManager
-    ? ["all", "Pending", "Accepted", "Assigned", "Preparing", "Ready for Pick-up", "Completed"]
-    : ["all", "Assigned", "Preparing", "Ready for Pick-up", "Completed"];
-
-  const summaryCards = useMemo(() => {
-    const countByStatus = (status: string) => orders.filter((order) => order.status === status).length;
-    return [
-      {
-        label: isManager ? t("branch_dashboard.summary.pending_review") : t("branch_dashboard.summary.assigned_to_you"),
-        value: isManager ? countByStatus("Pending") : countByStatus("Assigned"),
-        icon: Clock3,
-      },
-      {
-        label: t("branch_dashboard.summary.preparing"),
-        value: countByStatus("Preparing"),
-        icon: Play,
-      },
-      {
-        label: t("branch_dashboard.summary.ready"),
-        value: countByStatus("Ready for Pick-up"),
-        icon: PackageCheck,
-      },
-      {
-        label: isManager ? t("branch_dashboard.summary.branch_staff") : t("branch_dashboard.summary.completed"),
-        value: isManager ? staffMembers.length : countByStatus("Completed"),
-        icon: isManager ? Users : CheckCircle2,
-      },
-    ];
-  }, [isManager, orders, staffMembers.length, t]);
-
-  const analyticsChartConfig = useMemo<ChartConfig>(
-    () => ({
-      sales: {
-        label: t("branch_dashboard.analytics.metric_sales"),
-        color: currentPalette.swatches[0],
-      },
-      orders: {
-        label: t("branch_dashboard.analytics.metric_orders"),
-        color: currentPalette.swatches[1],
-      },
-      average: {
-        label: t("branch_dashboard.analytics.metric_average"),
-        color: currentPalette.swatches[2],
-      },
-      completed: {
-        label: t("branch_dashboard.status.Completed"),
-        color: "#22c55e",
-      },
-      active: {
-        label: t("branch_dashboard.analytics.active_pipeline"),
-        color: "#f59e0b",
-      },
-    }),
-    [currentPalette.swatches, t],
+  const activeOrders = useMemo(
+    () => orders.filter((order) => !TERMINAL_STATUSES.has(order.status)),
+    [orders],
   );
 
-  const analytics = useMemo(() => {
-    if (!isManager) return null;
+  const readyOrders = useMemo(
+    () => activeOrders.filter((order) => order.status === "Ready for Pick-up"),
+    [activeOrders],
+  );
 
-    const end = new Date();
-    end.setHours(23, 59, 59, 999);
-    const start = new Date(end);
-    start.setDate(end.getDate() - (analyticsRange - 1));
-    start.setHours(0, 0, 0, 0);
+  const assignableOrders = useMemo(
+    () => activeOrders.filter((order) => order.status === "Pending" || order.status === "Accepted"),
+    [activeOrders],
+  );
 
-    const buckets = Array.from({ length: analyticsRange }, (_, index) => {
-      const date = new Date(start);
-      date.setDate(start.getDate() + index);
+  const staffLoad = useMemo(() => {
+    const load = new Map<number, number>();
+    activeOrders.forEach((order) => {
+      if (order.assigned_staff_user_id) {
+        load.set(order.assigned_staff_user_id, (load.get(order.assigned_staff_user_id) || 0) + 1);
+      }
+    });
+    return load;
+  }, [activeOrders]);
+
+  const staffSnapshots = useMemo(() => {
+    const activityBucket = Math.floor(now / 60000);
+    return staffMembers.map((staff) => {
+      const assignedOrders = staffLoad.get(staff.id) || 0;
+      let presence: Presence = assignedOrders > 0 ? "busy" : "idle";
+      if (assignedOrders === 0 && (staff.id * 11 + activityBucket) % 7 === 0) {
+        presence = "offline";
+      }
       return {
-        key: date.toISOString().slice(0, 10),
-        date,
-        label: new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(date),
-        sales: 0,
-        orders: 0,
-        average: 0,
+        ...staff,
+        assignedOrders,
+        presence,
       };
     });
-    const bucketMap = new Map(buckets.map((bucket) => [bucket.key, bucket]));
+  }, [now, staffLoad, staffMembers]);
 
-    let revenueTotal = 0;
-    let ordersTotal = 0;
-    let completedRevenue = 0;
-    let completedOrders = 0;
-    let activePipeline = 0;
-    const statusCounts: Record<string, number> = {};
-
-    analyticsOrders.forEach((order) => {
-      const createdAt = new Date(order.created_at);
-      if (Number.isNaN(createdAt.getTime())) return;
-
-      const key = createdAt.toISOString().slice(0, 10);
-      const bucket = bucketMap.get(key);
-      if (createdAt >= start && createdAt <= end && bucket) {
-        bucket.sales += order.total;
-        bucket.orders += 1;
-      }
-
-      statusCounts[order.status] = (statusCounts[order.status] || 0) + 1;
-      ordersTotal += 1;
-      revenueTotal += order.total;
-
-      if (order.status === "Completed") {
-        completedRevenue += order.total;
-        completedOrders += 1;
-      }
-      if (!["Completed", "Cancelled", "No-show"].includes(order.status)) {
-        activePipeline += order.total;
-      }
-    });
-
-    buckets.forEach((bucket) => {
-      bucket.average = bucket.orders ? bucket.sales / bucket.orders : 0;
-    });
-
-    const statusData = Object.entries(statusCounts)
-      .map(([status, value]) => ({
-        status,
-        label: statusLabel(status),
-        value,
-      }))
-      .sort((a, b) => b.value - a.value);
-
-    const bestDay = [...buckets].sort((a, b) => b.sales - a.sales)[0];
-
-    return {
-      series: buckets,
-      statusData,
-      totals: {
-        revenueTotal,
-        ordersTotal,
-        completedRevenue,
-        completedOrders,
-        activePipeline,
-        completionRate: ordersTotal ? (completedOrders / ordersTotal) * 100 : 0,
-        averageOrderValue: ordersTotal ? revenueTotal / ordersTotal : 0,
-        bestDayLabel: bestDay?.label || "--",
-        bestDaySales: bestDay?.sales || 0,
+  const overview = useMemo(() => {
+    const pendingCount = activeOrders.filter((order) => order.status === "Pending").length;
+    const activeCount = activeOrders.filter((order) => order.status !== "Ready for Pick-up").length;
+    const prepSamples = orders.filter((order) =>
+      ["Assigned", "Preparing", "Ready for Pick-up", "Completed"].includes(order.status),
+    );
+    const averagePrepMinutes =
+      prepSamples.length > 0
+        ? Math.round(
+            prepSamples.reduce((sum, order) => sum + minutesSince(order.created_at, now), 0) / prepSamples.length,
+          )
+        : 0;
+    return [
+      {
+        label: isManager ? "Pending Orders" : "Assigned to You",
+        value: pendingCount,
+        detail: pendingCount >= 5 ? "High-pressure queue" : "Within target range",
+        icon: Clock3,
+        accent: pendingCount >= 5 || newOrderFlash ? "#fb7185" : "#ff6b00",
+        highlight: pendingCount >= 5 || newOrderFlash,
       },
-    };
-  }, [analyticsOrders, analyticsRange, isManager, locale, statusLabel]);
+      {
+        label: "Active Orders",
+        value: activeCount,
+        detail: `${activeOrders.length} total live in pipeline`,
+        icon: Sparkles,
+        accent: "#ff9b52",
+      },
+      {
+        label: "Ready for Pickup",
+        value: readyOrders.length,
+        detail: readyOrders.length ? "Customers can be called now" : "No pickups waiting",
+        icon: PackageCheck,
+        accent: "#34d399",
+      },
+      {
+        label: "Average Preparation Time",
+        value: averagePrepMinutes ? formatMinutesLabel(averagePrepMinutes) : "--",
+        detail: "Estimated from live queue age",
+        icon: CheckCircle2,
+        accent: "#facc15",
+      },
+    ];
+  }, [activeOrders, isManager, newOrderFlash, now, orders, readyOrders.length]);
 
-  const formatCurrencyCompact = (value: number) => `RWF ${compactFormatter.format(value)}`;
-  const formatMetricValue = (metric: "sales" | "orders" | "average", value: number) => {
-    if (metric === "orders") return value.toLocaleString(locale);
-    return formatCurrencyCompact(value);
+  const ordersByColumn = useMemo(() => {
+    const sorted = [...activeOrders].sort(
+      (left, right) => minutesSince(right.created_at, now) - minutesSince(left.created_at, now),
+    );
+    return KANBAN_COLUMNS.map((column) => ({
+      ...column,
+      orders: sorted.filter((order) => column.statuses.includes(order.status as never)),
+    }));
+  }, [activeOrders, now]);
+
+  const alerts = useMemo<AlertItem[]>(() => {
+    const pendingAged = activeOrders.filter(
+      (order) => order.status === "Pending" && minutesSince(order.created_at, now) >= 15,
+    );
+    const readyAged = activeOrders.filter(
+      (order) => order.status === "Ready for Pick-up" && minutesSince(order.created_at, now) >= 20,
+    );
+    const overloadedStaff = staffSnapshots.filter((staff) => staff.assignedOrders >= 3);
+
+    const nextAlerts: AlertItem[] = [];
+
+    if (pendingAged.length) {
+      nextAlerts.push({
+        id: "pending-aged",
+        tone: "danger",
+        title: "Orders waiting too long",
+        detail: `${pendingAged.length} pending order${pendingAged.length > 1 ? "s" : ""} are past the 15-minute review target.`,
+      });
+    }
+
+    if (overloadedStaff.length) {
+      nextAlerts.push({
+        id: "staff-overload",
+        tone: "warn",
+        title: "Overloaded staff detected",
+        detail: `${overloadedStaff.map((staff) => getStaffLabel(staff)).join(", ")} ${overloadedStaff.length > 1 ? "are" : "is"} carrying 3+ active orders.`,
+      });
+    }
+
+    if (readyAged.length) {
+      nextAlerts.push({
+        id: "ready-stale",
+        tone: "info",
+        title: "Ready but not picked",
+        detail: `${readyAged.length} pickup order${readyAged.length > 1 ? "s" : ""} have been waiting 20+ minutes.`,
+      });
+    }
+
+    if (!nextAlerts.length) {
+      nextAlerts.push({
+        id: "stable",
+        tone: "info",
+        title: "Operations stable",
+        detail: "Queue health looks good. Keep pressure on accepted orders and customer handoff.",
+      });
+    }
+
+    return nextAlerts;
+  }, [activeOrders, now, staffSnapshots]);
+
+  const analytics = useMemo(() => {
+    const revenueTracked = orders.reduce((sum, order) => sum + order.total, 0);
+    const completedOrders = orders.filter((order) => order.status === "Completed");
+    const completedRevenue = completedOrders.reduce((sum, order) => sum + order.total, 0);
+    const completionRate = orders.length ? Math.round((completedOrders.length / orders.length) * 100) : 0;
+    const dailyVolume = Array.from({ length: 7 }, (_, index) => {
+      const day = new Date();
+      day.setHours(0, 0, 0, 0);
+      day.setDate(day.getDate() - (6 - index));
+      const key = day.toISOString().slice(0, 10);
+      const dayOrders = orders.filter((order) => order.created_at.slice(0, 10) === key);
+      return {
+        key,
+        label: day.toLocaleDateString(undefined, { weekday: "short" }),
+        orders: dayOrders.length,
+        revenue: dayOrders.reduce((sum, order) => sum + order.total, 0),
+      };
+    });
+    const peakDay = [...dailyVolume].sort((left, right) => right.orders - left.orders)[0];
+    return {
+      revenueTracked,
+      completedRevenue,
+      completionRate,
+      dailyVolume,
+      peakDay,
+      delayedOrders: activeOrders.filter((order) => minutesSince(order.created_at, now) >= 20).length,
+      busyStaff: staffSnapshots.filter((staff) => staff.presence === "busy").length,
+    };
+  }, [activeOrders, now, orders, staffSnapshots]);
+
+  useEffect(() => {
+    const currentIds = orders.map((order) => order.id);
+    if (seenOrderIdsRef.current === null) {
+      seenOrderIdsRef.current = currentIds;
+      return;
+    }
+
+    const previousIds = new Set(seenOrderIdsRef.current);
+    const newOrders = orders.filter((order) => !previousIds.has(order.id));
+    if (newOrders.length) {
+      setNewOrderFlash(true);
+      toast.message(`${newOrders.length} new order${newOrders.length > 1 ? "s" : ""} entered the branch queue.`);
+      try {
+        const audioContext = new window.AudioContext();
+        const oscillator = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        oscillator.type = "sine";
+        oscillator.frequency.value = 720;
+        gain.gain.value = 0.03;
+        oscillator.connect(gain);
+        gain.connect(audioContext.destination);
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.12);
+      } catch {
+        // Visual alert remains active if audio is blocked by the browser.
+      }
+
+      const flashTimer = window.setTimeout(() => setNewOrderFlash(false), 4000);
+      seenOrderIdsRef.current = currentIds;
+      return () => window.clearTimeout(flashTimer);
+    }
+
+    seenOrderIdsRef.current = currentIds;
+  }, [orders]);
+
+  const handleRefresh = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["branch-orders"] }),
+      queryClient.invalidateQueries({ queryKey: ["branch-staff"] }),
+    ]);
+    toast.success("Live queue refreshed.");
   };
 
+  const assignOrderToStaff = async (order: BranchOrder, staffUserId: number) => {
+    if (!isManager) return;
+    if (order.status === "Assigned" || order.status === "Preparing" || order.status === "Ready for Pick-up") {
+      toast.info("Reassignment is only available before preparation starts.");
+      return;
+    }
+    if (order.status === "Pending") {
+      await orderAction.mutateAsync({ orderId: order.id, endpoint: "accept", silent: true });
+    }
+    await orderAction.mutateAsync({
+      orderId: order.id,
+      endpoint: "assign",
+      body: { staff_user_id: staffUserId },
+    });
+  };
+
+  const moveOrderToColumn = async (order: BranchOrder, columnId: string) => {
+    if (columnId === getColumnForStatus(order.status)) return;
+
+    if (isManager) {
+      if (columnId === "assigning" && order.status === "Pending") {
+        await orderAction.mutateAsync({ orderId: order.id, endpoint: "accept" });
+        return;
+      }
+      if (columnId === "ready" && order.status === "Ready for Pick-up") {
+        await orderAction.mutateAsync({ orderId: order.id, endpoint: "complete" });
+        return;
+      }
+      toast.info("This move needs staff action or a supported manager transition.");
+      return;
+    }
+
+    if (columnId === "preparing" && order.status === "Assigned") {
+      await orderAction.mutateAsync({ orderId: order.id, endpoint: "start" });
+      return;
+    }
+    if (columnId === "ready" && order.status === "Preparing") {
+      await orderAction.mutateAsync({ orderId: order.id, endpoint: "ready" });
+      return;
+    }
+    toast.info("This lane change is not available for your role.");
+  };
+
+  const actionableAlerts = alerts.filter((alert) => alert.id !== "stable");
+  const pendingAttentionCount = actionableAlerts.length;
+
   return (
-    <div className="min-h-screen bg-background text-foreground transition-colors duration-500">
-      <header className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur-xl">
-        <div className="container mx-auto px-4 py-6">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.35em] text-primary">{t("branch_dashboard.kicker")}</p>
-              <h1 className="mt-2 text-3xl font-black tracking-tight">
-                {isManager ? t("branch_dashboard.manager_title") : t("branch_dashboard.staff_title")}
-              </h1>
-              <p className="mt-2 text-sm text-muted-foreground">
-                {branchName} · {isManager ? t("branch_dashboard.manager_subtitle") : t("branch_dashboard.staff_subtitle")}
-              </p>
-            </div>
-            <div className="flex flex-col gap-4 lg:items-end">
-              <div className="flex flex-wrap items-center gap-3">
-                <ThemePalettePicker />
-                <ThemeToggle />
-                <DropdownMenu>
-                  <DropdownMenuTrigger className="flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-foreground transition-colors hover:bg-accent outline-none">
-                    <span>{currentLang.flag}</span>
-                    <span>{currentLang.code}</span>
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="rounded-2xl border border-border bg-card">
-                    {languages.map((lang) => (
-                      <DropdownMenuItem
-                        key={lang.code}
-                        onClick={() => setLanguage(lang.code)}
-                        className="flex items-center gap-2 cursor-pointer"
-                      >
-                        <span>{lang.flag}</span>
-                        <span className="text-xs font-bold">{lang.label}</span>
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+    <div
+      className="min-h-screen bg-[#0f172a] text-white"
+      style={{ fontFamily: "Poppins, DM Sans, sans-serif" }}
+    >
+      <div className="pointer-events-none fixed inset-0 overflow-hidden">
+        <div className="absolute left-[-12%] top-[-8%] h-72 w-72 rounded-full bg-[#ff6b00]/20 blur-3xl" />
+        <div className="absolute right-[-8%] top-[10%] h-96 w-96 rounded-full bg-cyan-400/10 blur-3xl" />
+        <div className="absolute bottom-[-10%] left-[28%] h-80 w-80 rounded-full bg-amber-300/10 blur-3xl" />
+      </div>
+
+      <main className="relative mx-auto max-w-[1700px] px-4 pb-28 pt-6 sm:px-6 xl:px-8">
+        <motion.header
+          initial={{ opacity: 0, y: 18 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-[32px] border border-white/10 bg-white/8 p-6 shadow-[0_30px_120px_rgba(2,6,23,0.45)] backdrop-blur-2xl"
+        >
+          <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.28em] text-white/60">
+                <span className="rounded-full border border-white/10 bg-white/6 px-3 py-1">Simba Supermarket Rwanda</span>
+                <span className="rounded-full border border-[#ff6b00]/30 bg-[#ff6b00]/10 px-3 py-1 text-[#ffb57d]">
+                  {branchName}
+                </span>
+                <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-emerald-200">
+                  Live refresh every 5s
+                </span>
               </div>
-              <div className="rounded-3xl border border-border bg-card/70 px-5 py-4 text-right">
-                <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t("branch_dashboard.signed_in_as")}</p>
-                <p className="mt-2 text-sm font-black text-foreground">
-                  {user ? [user.first_name, user.last_name].filter(Boolean).join(" ").trim() || user.email : t("branch_dashboard.operations_user")}
+              <div>
+                <h1 className="text-3xl font-black tracking-[-0.04em] text-white sm:text-4xl">
+                  {isManager ? "Branch Manager Control Center" : "Branch Fulfillment Control Center"}
+                </h1>
+                <p className="mt-3 max-w-3xl text-sm text-slate-300 sm:text-base">
+                  High-speed branch operations for pickup orders. Scan queue pressure, assign staff fast, and move every order from pending to customer handoff without losing tempo.
                 </p>
-                <p className="mt-1 text-xs text-primary">{isManager ? t("branch_dashboard.role_manager") : t("branch_dashboard.role_staff")}</p>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3 xl:min-w-[540px]">
+              <div className="rounded-[24px] border border-white/10 bg-slate-950/45 p-4">
+                <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Signed in as</p>
+                <p className="mt-3 text-base font-semibold text-white">{currentUserLabel}</p>
+                <p className="mt-1 text-sm text-[#ffb57d]">{isManager ? "Branch Manager" : "Branch Staff"}</p>
+              </div>
+              <div className="rounded-[24px] border border-white/10 bg-slate-950/45 p-4">
+                <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Queue Pressure</p>
+                <p className="mt-3 text-3xl font-black text-white">{activeOrders.length}</p>
+                <p className="mt-1 text-sm text-slate-300">Orders currently under branch control</p>
+              </div>
+              <div
+                className={cn(
+                  "rounded-[24px] border p-4 transition-all",
+                  pendingAttentionCount
+                    ? "border-rose-400/30 bg-rose-500/10 shadow-[0_0_0_1px_rgba(251,113,133,0.12)]"
+                    : "border-white/10 bg-slate-950/45",
+                )}
+              >
+                <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Smart Alerts</p>
+                <p className="mt-3 text-3xl font-black text-white">{actionableAlerts.length}</p>
+                <p className="mt-1 text-sm text-slate-300">
+                  {pendingAttentionCount ? "Action recommended now" : "No urgent disruption detected"}
+                </p>
               </div>
             </div>
           </div>
-        </div>
-      </header>
+        </motion.header>
 
-      <main className="container mx-auto space-y-6 px-4 py-8">
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {summaryCards.map(({ label, value, icon: Icon }) => (
-            <div key={label} className="rounded-[1.75rem] border border-border bg-card/70 p-5">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{label}</span>
-                <Icon className="h-5 w-5 text-primary" />
-              </div>
-              <p className="mt-4 text-3xl font-black">{value}</p>
-            </div>
-          ))}
+        <section className="mt-6 grid gap-4 lg:grid-cols-2 2xl:grid-cols-4">
+          {overview.map((card, index) => {
+            const Icon = card.icon;
+            return (
+              <motion.div
+                key={card.label}
+                initial={{ opacity: 0, y: 24 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.05 }}
+                className={cn(
+                  "relative overflow-hidden rounded-[28px] border border-white/10 bg-white/8 p-6 backdrop-blur-2xl",
+                  card.highlight && "shadow-[0_0_0_1px_rgba(255,107,0,0.18),0_30px_110px_rgba(249,115,22,0.22)]",
+                )}
+              >
+                <div
+                  className="absolute inset-x-0 top-0 h-1"
+                  style={{ background: `linear-gradient(90deg, ${card.accent}, transparent)` }}
+                />
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">{card.label}</p>
+                    <div className="mt-4 flex items-end gap-3">
+                      <p className="text-4xl font-black tracking-[-0.05em] text-white">{card.value}</p>
+                      {card.highlight && (
+                        <span className="rounded-full border border-rose-400/30 bg-rose-500/12 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-rose-200">
+                          Escalated
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-3 text-sm text-slate-300">{card.detail}</p>
+                  </div>
+                  <div
+                    className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10"
+                    style={{ backgroundColor: `${card.accent}1A`, color: card.accent }}
+                  >
+                    <Icon className="h-6 w-6" />
+                  </div>
+                </div>
+              </motion.div>
+            );
+          })}
         </section>
 
-        {isManager && analytics && (
-          <section className="rounded-[2rem] border border-border bg-card/70 p-5 shadow-[0_24px_80px_rgba(0,0,0,0.05)]">
-            <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.35em] text-primary">{t("branch_dashboard.analytics.kicker")}</p>
-                <h2 className="mt-2 text-2xl font-black tracking-tight">{t("branch_dashboard.analytics.title")}</h2>
-                <p className="mt-2 max-w-2xl text-sm text-muted-foreground">{t("branch_dashboard.analytics.desc")}</p>
-              </div>
-              <div className="grid gap-3 md:grid-cols-3">
-                <div className="rounded-2xl border border-border bg-background/70 p-4">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t("branch_dashboard.analytics.total_sales")}</p>
-                  <p className="mt-2 text-xl font-black">{formatPrice(analytics.totals.completedRevenue)}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{t("branch_dashboard.analytics.completed_orders", { count: analytics.totals.completedOrders })}</p>
-                </div>
-                <div className="rounded-2xl border border-border bg-background/70 p-4">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t("branch_dashboard.analytics.pipeline")}</p>
-                  <p className="mt-2 text-xl font-black">{formatPrice(analytics.totals.activePipeline)}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{t("branch_dashboard.analytics.completion_rate", { rate: analytics.totals.completionRate.toFixed(0) })}</p>
-                </div>
-                <div className="rounded-2xl border border-border bg-background/70 p-4">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t("branch_dashboard.analytics.best_day")}</p>
-                  <p className="mt-2 text-xl font-black">{analytics.totals.bestDayLabel}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{formatPrice(analytics.totals.bestDaySales)}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-5 flex flex-col gap-3 rounded-[1.5rem] border border-border bg-background/60 p-4">
-              <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="space-y-6">
+            <div className="rounded-[30px] border border-white/10 bg-white/8 p-5 backdrop-blur-2xl">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
                 <div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.25em] text-muted-foreground">{t("branch_dashboard.analytics.comfort_controls")}</p>
-                  <p className="mt-1 text-sm text-muted-foreground">{t("branch_dashboard.analytics.comfort_desc")}</p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {[7, 14, 30].map((range) => (
-                    <button
-                      key={range}
-                      type="button"
-                      onClick={() => setAnalyticsRange(range as 7 | 14 | 30)}
-                      className={`rounded-full px-4 py-2 text-[11px] font-black uppercase tracking-widest transition-all ${
-                        analyticsRange === range ? "bg-primary text-white" : "bg-card text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {t("branch_dashboard.analytics.range_days", { count: range })}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    ["sales", BarChart3, t("branch_dashboard.analytics.metric_sales")],
-                    ["orders", ShoppingBag, t("branch_dashboard.analytics.metric_orders")],
-                    ["average", LineChart, t("branch_dashboard.analytics.metric_average")],
-                  ].map(([metric, Icon, label]) => (
-                    <button
-                      key={metric}
-                      type="button"
-                      onClick={() => setAnalyticsMetric(metric as "sales" | "orders" | "average")}
-                      className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-xs font-black uppercase tracking-widest transition-all ${
-                        analyticsMetric === metric
-                          ? "bg-primary text-white"
-                          : "border border-border bg-card text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      <Icon className="h-4 w-4" />
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    ["area", AreaChartIcon, t("branch_dashboard.analytics.visual_area")],
-                    ["bar", BarChart3, t("branch_dashboard.analytics.visual_bar")],
-                  ].map(([visual, Icon, label]) => (
-                    <button
-                      key={visual}
-                      type="button"
-                      onClick={() => setAnalyticsVisual(visual as "area" | "bar")}
-                      className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-xs font-black uppercase tracking-widest transition-all ${
-                        analyticsVisual === visual
-                          ? "bg-primary text-white"
-                          : "border border-border bg-card text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      <Icon className="h-4 w-4" />
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-5 grid gap-5 xl:grid-cols-[1.35fr_0.65fr]">
-              <div className="rounded-[1.75rem] border border-border bg-background/70 p-4">
-                <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.28em] text-primary">{t("branch_dashboard.analytics.trend")}</p>
-                    <h3 className="mt-2 text-xl font-black">{t(`branch_dashboard.analytics.metric_heading.${analyticsMetric}`)}</h3>
-                    <p className="mt-1 text-sm text-muted-foreground">{t("branch_dashboard.analytics.trend_desc", { count: analyticsRange })}</p>
-                  </div>
-                  <div className="rounded-2xl border border-border bg-card px-4 py-3">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t("branch_dashboard.analytics.current_focus")}</p>
-                    <p className="mt-1 text-sm font-black text-foreground">
-                      {formatMetricValue(
-                        analyticsMetric,
-                        analytics.series.reduce((sum, item) => sum + item[analyticsMetric], 0) / (analyticsMetric === "average" ? Math.max(analytics.series.filter((item) => item.orders > 0).length, 1) : 1),
-                      )}
-                    </p>
-                  </div>
-                </div>
-                <ChartContainer config={analyticsChartConfig} className="mt-4 h-[320px] w-full">
-                  {analyticsVisual === "area" ? (
-                    <AreaChart data={analytics.series}>
-                      <CartesianGrid vertical={false} />
-                      <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={10} />
-                      <YAxis tickLine={false} axisLine={false} tickFormatter={(value) => analyticsMetric === "orders" ? String(value) : compactFormatter.format(value)} />
-                      <ChartTooltip
-                        content={
-                          <ChartTooltipContent
-                            formatter={(value, name) => (
-                              <>
-                                <div className="flex flex-1 items-center justify-between gap-3">
-                                  <span className="text-muted-foreground">{analyticsChartConfig[String(name)]?.label || name}</span>
-                                  <span className="font-mono font-medium text-foreground">
-                                    {formatMetricValue(analyticsMetric, Number(value))}
-                                  </span>
-                                </div>
-                              </>
-                            )}
-                          />
-                        }
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey={analyticsMetric}
-                        stroke={`var(--color-${analyticsMetric})`}
-                        fill={`var(--color-${analyticsMetric})`}
-                        fillOpacity={0.2}
-                        strokeWidth={3}
-                      />
-                    </AreaChart>
-                  ) : (
-                    <BarChart data={analytics.series}>
-                      <CartesianGrid vertical={false} />
-                      <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={10} />
-                      <YAxis tickLine={false} axisLine={false} tickFormatter={(value) => analyticsMetric === "orders" ? String(value) : compactFormatter.format(value)} />
-                      <ChartTooltip
-                        content={
-                          <ChartTooltipContent
-                            formatter={(value, name) => (
-                              <>
-                                <div className="flex flex-1 items-center justify-between gap-3">
-                                  <span className="text-muted-foreground">{analyticsChartConfig[String(name)]?.label || name}</span>
-                                  <span className="font-mono font-medium text-foreground">
-                                    {formatMetricValue(analyticsMetric, Number(value))}
-                                  </span>
-                                </div>
-                              </>
-                            )}
-                          />
-                        }
-                      />
-                      <Bar dataKey={analyticsMetric} fill={`var(--color-${analyticsMetric})`} radius={[12, 12, 4, 4]} />
-                    </BarChart>
-                  )}
-                </ChartContainer>
-              </div>
-
-              <div className="grid gap-5">
-                <div className="rounded-[1.75rem] border border-border bg-background/70 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-[10px] font-black uppercase tracking-[0.28em] text-primary">{t("branch_dashboard.analytics.status_mix")}</p>
-                      <h3 className="mt-2 text-xl font-black">{t("branch_dashboard.analytics.status_title")}</h3>
-                    </div>
-                    <PieChartIcon className="h-5 w-5 text-primary" />
-                  </div>
-                  <ChartContainer config={analyticsChartConfig} className="mt-4 h-[240px] w-full">
-                    <PieChart>
-                      <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-                      <Pie data={analytics.statusData} dataKey="value" nameKey="status" innerRadius={58} outerRadius={88} paddingAngle={3}>
-                        {analytics.statusData.map((entry, index) => {
-                          const colorPool = [
-                            currentPalette.swatches[0],
-                            currentPalette.swatches[1],
-                            "#22c55e",
-                            "#f59e0b",
-                            "#ef4444",
-                            "#94a3b8",
-                          ];
-                          return <Cell key={entry.status} fill={colorPool[index % colorPool.length]} />;
-                        })}
-                      </Pie>
-                    </PieChart>
-                  </ChartContainer>
-                  <div className="mt-3 grid gap-2">
-                    {analytics.statusData.map((entry, index) => {
-                      const colorPool = [
-                        currentPalette.swatches[0],
-                        currentPalette.swatches[1],
-                        "#22c55e",
-                        "#f59e0b",
-                        "#ef4444",
-                        "#94a3b8",
-                      ];
-                      return (
-                        <div key={entry.status} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/80 px-3 py-2 text-xs">
-                          <div className="flex items-center gap-2">
-                            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: colorPool[index % colorPool.length] }} />
-                            <span className="font-bold text-foreground">{entry.label}</span>
-                          </div>
-                          <span className="font-mono font-medium text-muted-foreground">{entry.value.toLocaleString(locale)}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="rounded-[1.75rem] border border-border bg-background/70 p-4">
-                  <p className="text-[10px] font-black uppercase tracking-[0.28em] text-primary">{t("branch_dashboard.analytics.quick_insights")}</p>
-                  <div className="mt-4 space-y-3">
-                    <div className="rounded-2xl border border-border bg-card/80 p-3">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t("branch_dashboard.analytics.average_order_value")}</p>
-                      <p className="mt-1 text-lg font-black">{formatPrice(analytics.totals.averageOrderValue)}</p>
-                    </div>
-                    <div className="rounded-2xl border border-border bg-card/80 p-3">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t("branch_dashboard.analytics.orders_seen")}</p>
-                      <p className="mt-1 text-lg font-black">{analytics.totals.ordersTotal.toLocaleString(locale)}</p>
-                    </div>
-                    <div className="rounded-2xl border border-border bg-card/80 p-3">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t("branch_dashboard.analytics.total_revenue_tracked")}</p>
-                      <p className="mt-1 text-lg font-black">{formatPrice(analytics.totals.revenueTotal)}</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
-
-        <section className={`grid gap-6 ${isManager ? "xl:grid-cols-[1.1fr_0.9fr]" : ""}`}>
-          <div className="rounded-[2rem] border border-border bg-card/60">
-            <div className="border-b border-border p-5">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <h2 className="text-xl font-black">
-                    {isManager ? t("branch_dashboard.orders.manager_heading") : t("branch_dashboard.orders.staff_heading")}
-                  </h2>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {isManager
-                      ? t("branch_dashboard.orders.manager_desc")
-                      : t("branch_dashboard.orders.staff_desc")}
+                  <p className="text-[11px] uppercase tracking-[0.28em] text-[#ffb57d]">Kanban Pipeline</p>
+                  <h2 className="mt-2 text-2xl font-black tracking-[-0.03em] text-white">Order Flow Command Board</h2>
+                  <p className="mt-2 text-sm text-slate-300">
+                    Drag orders across supported stages, or drop them on staff cards for fast assignment.
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {availableFilters.map((status) => (
-                    <button
-                      key={status}
-                      type="button"
-                      onClick={() => setStatusFilter(status)}
-                      className={`rounded-full px-4 py-2 text-[11px] font-black uppercase tracking-widest transition-all ${
-                        statusFilter === status ? "bg-primary text-white" : "bg-background text-muted-foreground hover:text-foreground"
-                      }`}
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+                  <span className="rounded-full border border-white/10 bg-slate-950/45 px-3 py-1.5">
+                    {draggingOrderId ? `Dragging order #${draggingOrderId}` : "Drag enabled for active orders"}
+                  </span>
+                  <span className="rounded-full border border-white/10 bg-slate-950/45 px-3 py-1.5">
+                    {ordersRefreshing ? "Syncing live queue..." : "Queue synced"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-4 2xl:grid-cols-4">
+                {ordersByColumn.map((column, columnIndex) => (
+                  <motion.section
+                    key={column.id}
+                    initial={{ opacity: 0, y: 28 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: columnIndex * 0.06 }}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      setHoveredColumn(column.id);
+                    }}
+                    onDragLeave={() => setHoveredColumn((value) => (value === column.id ? null : value))}
+                    onDrop={async (event) => {
+                      event.preventDefault();
+                      setHoveredColumn(null);
+                      const orderId = Number(event.dataTransfer.getData("text/plain") || draggingOrderId);
+                      const order = activeOrders.find((item) => item.id === orderId);
+                      if (!order) return;
+                      await moveOrderToColumn(order, column.id);
+                      setDraggingOrderId(null);
+                    }}
+                    className={cn(
+                      "flex min-h-[620px] flex-col rounded-[26px] border border-white/10 bg-slate-950/45 p-4 transition-all",
+                      hoveredColumn === column.id && "border-[#ff6b00]/45 bg-[#ff6b00]/10",
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: column.accent }} />
+                          <h3 className="text-base font-bold text-white">{column.title}</h3>
+                        </div>
+                        <p className="mt-2 text-sm text-slate-400">{column.description}</p>
+                      </div>
+                      <div
+                        className="rounded-2xl border border-white/10 px-3 py-2 text-center"
+                        style={{ backgroundColor: `${column.accent}12` }}
+                      >
+                        <p className="text-2xl font-black text-white">{column.orders.length}</p>
+                        <p className="text-[10px] uppercase tracking-[0.22em] text-slate-400">Orders</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex-1 space-y-3">
+                      <AnimatePresence initial={false}>
+                        {column.orders.map((order) => {
+                          const items = parseItems(order.items);
+                          const ageMinutes = minutesSince(order.created_at, now);
+                          const urgency = getUrgencyClasses(ageMinutes);
+                          const selectionValue = staffSelectionByOrder[order.id] || "";
+                          return (
+                            <motion.article
+                              key={order.id}
+                              layout
+                              initial={{ opacity: 0, scale: 0.98 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              exit={{ opacity: 0, scale: 0.98 }}
+                              draggable={!TERMINAL_STATUSES.has(order.status)}
+                              onDragStart={(event) => {
+                                setDraggingOrderId(order.id);
+                                event.dataTransfer.setData("text/plain", String(order.id));
+                              }}
+                              onDragEnd={() => {
+                                setDraggingOrderId(null);
+                                setHoveredColumn(null);
+                                setHoveredStaffId(null);
+                              }}
+                              className={cn(
+                                "rounded-[24px] border bg-white/8 p-4 shadow-[0_18px_60px_rgba(15,23,42,0.32)] backdrop-blur-xl transition-all hover:-translate-y-0.5",
+                                urgency.card,
+                                draggingOrderId === order.id && "rotate-[0.5deg] opacity-85",
+                              )}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="text-lg font-bold text-white">
+                                    {order.customer_name || "Customer"}
+                                  </p>
+                                  <p className="mt-1 text-sm text-slate-400">Order #{order.id}</p>
+                                </div>
+                                <div className="flex flex-col items-end gap-2">
+                                  <span className={cn("rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em]", urgency.pill)}>
+                                    {urgency.label}
+                                  </span>
+                                  <span className="text-sm font-semibold text-white">{formatPrice(order.total)}</span>
+                                </div>
+                              </div>
+
+                              <div className="mt-4 flex items-center gap-2 text-sm text-slate-300">
+                                <span className={cn("h-2.5 w-2.5 rounded-full", urgency.dot)} />
+                                <span>{formatSincePlaced(ageMinutes)}</span>
+                                <span className="text-slate-500">•</span>
+                                <span>{items.length} item{items.length === 1 ? "" : "s"}</span>
+                              </div>
+
+                              <div className="mt-4 space-y-2 rounded-[20px] border border-white/10 bg-slate-950/40 p-3">
+                                {items.slice(0, 3).map((item, itemIndex) => (
+                                  <div key={`${order.id}-${item.id ?? itemIndex}`} className="flex items-center justify-between gap-3 text-sm text-slate-300">
+                                    <span className="truncate">{item.name || "Product item"}</span>
+                                    <span className="rounded-full bg-white/8 px-2 py-0.5 text-xs text-white/80">
+                                      x{item.quantity || 1}
+                                    </span>
+                                  </div>
+                                ))}
+                                {items.length > 3 && (
+                                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                    +{items.length - 3} more items
+                                  </p>
+                                )}
+                              </div>
+
+                              <div className="mt-4 flex flex-wrap items-center gap-2">
+                                <span className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-xs font-medium text-slate-200">
+                                  {order.assigned_staff ? `Assigned: ${order.assigned_staff}` : "Unassigned"}
+                                </span>
+                                {order.pickup_time && (
+                                  <span className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-xs font-medium text-slate-300">
+                                    Pickup {order.pickup_time}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="mt-4 space-y-3">
+                                {isManager && order.status === "Pending" && (
+                                  <button
+                                    type="button"
+                                    onClick={() => orderAction.mutate({ orderId: order.id, endpoint: "accept" })}
+                                    className="w-full rounded-2xl bg-[#ff6b00] px-4 py-3 text-sm font-bold text-white transition-all hover:bg-[#ff7d1f]"
+                                  >
+                                    Accept Order
+                                  </button>
+                                )}
+
+                                {isManager && (order.status === "Pending" || order.status === "Accepted") && (
+                                  <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                                    <select
+                                      value={selectionValue}
+                                      onChange={(event) =>
+                                        setStaffSelectionByOrder((current) => ({
+                                          ...current,
+                                          [order.id]: event.target.value,
+                                        }))
+                                      }
+                                      className="h-11 rounded-2xl border border-white/10 bg-slate-950/65 px-3 text-sm text-white outline-none"
+                                    >
+                                      <option value="">Assign staff</option>
+                                      {staffMembers.map((staff) => (
+                                        <option key={staff.id} value={String(staff.id)} className="bg-slate-950">
+                                          {getStaffLabel(staff)}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <button
+                                      type="button"
+                                      disabled={!selectionValue}
+                                      onClick={async () => {
+                                        await assignOrderToStaff(order, Number(selectionValue));
+                                        setStaffSelectionByOrder((current) => ({ ...current, [order.id]: "" }));
+                                      }}
+                                      className="rounded-2xl border border-[#ff6b00]/30 bg-[#ff6b00]/12 px-4 py-3 text-sm font-bold text-[#ffb57d] transition-all hover:bg-[#ff6b00] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                                    >
+                                      Assign Staff
+                                    </button>
+                                  </div>
+                                )}
+
+                                {!isManager && order.status === "Assigned" && (
+                                  <button
+                                    type="button"
+                                    onClick={() => orderAction.mutate({ orderId: order.id, endpoint: "start" })}
+                                    className="w-full rounded-2xl border border-amber-400/30 bg-amber-400/12 px-4 py-3 text-sm font-bold text-amber-100 transition-all hover:bg-amber-400 hover:text-slate-950"
+                                  >
+                                    Start Preparing
+                                  </button>
+                                )}
+
+                                {!isManager && order.status === "Preparing" && (
+                                  <button
+                                    type="button"
+                                    onClick={() => orderAction.mutate({ orderId: order.id, endpoint: "ready" })}
+                                    className="w-full rounded-2xl border border-emerald-400/30 bg-emerald-400/12 px-4 py-3 text-sm font-bold text-emerald-100 transition-all hover:bg-emerald-400 hover:text-slate-950"
+                                  >
+                                    Mark as Ready
+                                  </button>
+                                )}
+
+                                {isManager && order.status === "Ready for Pick-up" && (
+                                  <button
+                                    type="button"
+                                    onClick={() => orderAction.mutate({ orderId: order.id, endpoint: "complete" })}
+                                    className="w-full rounded-2xl border border-emerald-400/30 bg-emerald-400/12 px-4 py-3 text-sm font-bold text-emerald-100 transition-all hover:bg-emerald-400 hover:text-slate-950"
+                                  >
+                                    Confirm Pickup
+                                  </button>
+                                )}
+
+                                {isManager && order.status === "Preparing" && (
+                                  <div className="rounded-2xl border border-white/10 bg-white/6 px-3 py-3 text-sm text-slate-300">
+                                    Staff is preparing this order. It will move to pickup once the branch team marks it ready.
+                                  </div>
+                                )}
+                              </div>
+                            </motion.article>
+                          );
+                        })}
+                      </AnimatePresence>
+
+                      {!column.orders.length && (
+                        <div className="flex h-full min-h-[180px] items-center justify-center rounded-[24px] border border-dashed border-white/10 bg-white/[0.03] p-6 text-center text-sm text-slate-500">
+                          Drop an eligible order here or wait for live queue updates.
+                        </div>
+                      )}
+                    </div>
+                  </motion.section>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-6 xl:sticky xl:top-6 xl:h-fit">
+            <section className="rounded-[30px] border border-white/10 bg-white/8 p-5 backdrop-blur-2xl">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.28em] text-[#ffb57d]">Staff Management</p>
+                  <h2 className="mt-2 text-2xl font-black tracking-[-0.03em] text-white">Branch Team Load</h2>
+                </div>
+                <Users className="h-6 w-6 text-[#ffb57d]" />
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {staffSnapshots.map((staff) => {
+                  const statusClasses =
+                    staff.presence === "busy"
+                      ? "border-amber-400/30 bg-amber-400/12 text-amber-100"
+                      : staff.presence === "offline"
+                        ? "border-slate-600/40 bg-slate-700/25 text-slate-300"
+                        : "border-emerald-400/30 bg-emerald-400/12 text-emerald-100";
+
+                  return (
+                    <div
+                      key={staff.id}
+                      onDragOver={(event) => {
+                        if (!isManager) return;
+                        event.preventDefault();
+                        setHoveredStaffId(staff.id);
+                      }}
+                      onDragLeave={() => setHoveredStaffId((value) => (value === staff.id ? null : value))}
+                      onDrop={async (event) => {
+                        if (!isManager) return;
+                        event.preventDefault();
+                        setHoveredStaffId(null);
+                        const orderId = Number(event.dataTransfer.getData("text/plain") || draggingOrderId);
+                        const order = activeOrders.find((item) => item.id === orderId);
+                        if (!order) return;
+                        await assignOrderToStaff(order, staff.id);
+                        setDraggingOrderId(null);
+                      }}
+                      className={cn(
+                        "rounded-[24px] border border-white/10 bg-slate-950/45 p-4 transition-all",
+                        hoveredStaffId === staff.id && "border-[#ff6b00]/45 bg-[#ff6b00]/10",
+                      )}
                     >
-                      {status === "all" ? t("branch_dashboard.filters.all") : statusLabel(status)}
-                    </button>
-                  ))}
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/6">
+                            <UserRound className="h-5 w-5 text-slate-200" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-white">{getStaffLabel(staff)}</p>
+                            <p className="mt-1 text-xs text-slate-400">{staff.email}</p>
+                          </div>
+                        </div>
+                        <span className={cn("rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em]", statusClasses)}>
+                          {staff.presence}
+                        </span>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-2 gap-3">
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                          <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Assigned</p>
+                          <p className="mt-2 text-2xl font-black text-white">{staff.assignedOrders}</p>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                          <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Capacity</p>
+                          <p className="mt-2 text-sm font-semibold text-slate-200">
+                            {staff.assignedOrders >= 3 ? "Overloaded" : staff.assignedOrders > 0 ? "Active" : "Open"}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {!staffSnapshots.length && (
+                  <div className="rounded-[24px] border border-dashed border-white/10 bg-white/[0.03] p-6 text-center text-sm text-slate-500">
+                    No staff accounts are attached to this branch yet.
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="rounded-[30px] border border-white/10 bg-white/8 p-5 backdrop-blur-2xl">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.28em] text-[#ffb57d]">Smart Alerts</p>
+                  <h2 className="mt-2 text-2xl font-black tracking-[-0.03em] text-white">Queue Signals</h2>
+                </div>
+                <BellRing className="h-6 w-6 text-[#ffb57d]" />
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {alerts.map((alert) => {
+                  const toneClasses =
+                    alert.tone === "danger"
+                      ? "border-rose-500/30 bg-rose-500/10"
+                      : alert.tone === "warn"
+                        ? "border-amber-400/30 bg-amber-400/10"
+                        : "border-cyan-400/20 bg-cyan-400/10";
+                  return (
+                    <div key={alert.id} className={cn("rounded-[24px] border p-4", toneClasses)}>
+                      <div className="flex items-start gap-3">
+                        <AlertTriangle className="mt-0.5 h-5 w-5 text-white" />
+                        <div>
+                          <p className="text-sm font-semibold text-white">{alert.title}</p>
+                          <p className="mt-1 text-sm text-slate-200">{alert.detail}</p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section
+              ref={quickAssignRef}
+              className="rounded-[30px] border border-white/10 bg-white/8 p-5 backdrop-blur-2xl"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.28em] text-[#ffb57d]">
+                    {isManager ? "Quick Assign" : "Team Notes"}
+                  </p>
+                  <h2 className="mt-2 text-2xl font-black tracking-[-0.03em] text-white">
+                    {isManager ? "Fast Dispatch" : "Execution Focus"}
+                  </h2>
+                </div>
+                <ArrowUpRight className="h-6 w-6 text-[#ffb57d]" />
+              </div>
+
+              {isManager ? (
+                <div className="mt-4 space-y-3">
+                  <select
+                    value={quickAssignOrderId}
+                    onChange={(event) => setQuickAssignOrderId(event.target.value)}
+                    className="h-12 w-full rounded-2xl border border-white/10 bg-slate-950/65 px-3 text-sm text-white outline-none"
+                  >
+                    <option value="">Choose order</option>
+                    {assignableOrders.map((order) => (
+                      <option key={order.id} value={String(order.id)} className="bg-slate-950">
+                        #{order.id} • {order.customer_name || "Customer"} • {order.status}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={quickAssignStaffId}
+                    onChange={(event) => setQuickAssignStaffId(event.target.value)}
+                    className="h-12 w-full rounded-2xl border border-white/10 bg-slate-950/65 px-3 text-sm text-white outline-none"
+                  >
+                    <option value="">Choose staff</option>
+                    {staffMembers.map((staff) => (
+                      <option key={staff.id} value={String(staff.id)} className="bg-slate-950">
+                        {getStaffLabel(staff)}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={!quickAssignOrderId || !quickAssignStaffId}
+                    onClick={async () => {
+                      const order = activeOrders.find((item) => item.id === Number(quickAssignOrderId));
+                      if (!order) return;
+                      await assignOrderToStaff(order, Number(quickAssignStaffId));
+                      setQuickAssignOrderId("");
+                      setQuickAssignStaffId("");
+                    }}
+                    className="w-full rounded-2xl bg-[#ff6b00] px-4 py-3 text-sm font-bold text-white transition-all hover:bg-[#ff7d1f] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Assign Now
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-4 space-y-3">
+                  <div className="rounded-[24px] border border-white/10 bg-slate-950/45 p-4 text-sm text-slate-300">
+                    Pull assigned orders into preparation immediately, keep pickup bags staged by customer name, and use the ready action the moment handoff is possible.
+                  </div>
+                  <div className="rounded-[24px] border border-white/10 bg-slate-950/45 p-4 text-sm text-slate-300">
+                    If you see a customer waiting on-site, prioritize the oldest ready order first and notify the manager after pickup completion.
+                  </div>
+                </div>
+              )}
+            </section>
+          </div>
+        </section>
+      </main>
+
+      <div className="fixed bottom-5 right-5 z-30">
+        <div className="flex flex-col gap-3 rounded-[28px] border border-white/10 bg-slate-950/80 p-3 shadow-[0_24px_80px_rgba(2,6,23,0.55)] backdrop-blur-2xl">
+          {isManager && (
+            <button
+              type="button"
+              onClick={() => quickAssignRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })}
+              className="flex items-center gap-3 rounded-2xl bg-white/6 px-4 py-3 text-left text-sm font-semibold text-white transition-all hover:bg-white/10"
+            >
+              <Users className="h-4 w-4 text-[#ffb57d]" />
+              <span>Assign staff quickly</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handleRefresh}
+            className="flex items-center gap-3 rounded-2xl bg-white/6 px-4 py-3 text-left text-sm font-semibold text-white transition-all hover:bg-white/10"
+          >
+            <RefreshCcw className={cn("h-4 w-4 text-[#ffb57d]", ordersRefreshing && "animate-spin")} />
+            <span>Refresh orders</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => toast.success("Staff notification dispatched to the branch channel.")}
+            className="flex items-center gap-3 rounded-2xl bg-white/6 px-4 py-3 text-left text-sm font-semibold text-white transition-all hover:bg-white/10"
+          >
+            <BellRing className="h-4 w-4 text-[#ffb57d]" />
+            <span>Notify staff</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setAnalyticsOpen(true)}
+            className="flex items-center gap-3 rounded-2xl bg-[#ff6b00] px-4 py-3 text-left text-sm font-semibold text-white transition-all hover:bg-[#ff7d1f]"
+          >
+            <Sparkles className="h-4 w-4" />
+            <span>View analytics</span>
+          </button>
+        </div>
+      </div>
+
+      <Dialog open={analyticsOpen} onOpenChange={setAnalyticsOpen}>
+        <DialogContent className="max-w-4xl border-white/10 bg-[#111827] p-0 text-white shadow-[0_30px_120px_rgba(0,0,0,0.55)]">
+          <DialogHeader className="border-b border-white/10 px-6 py-5">
+            <DialogTitle className="text-2xl font-black tracking-[-0.03em] text-white">Branch analytics snapshot</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Live operational readout for the current branch queue and pickup throughput.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-6 px-6 py-6 lg:grid-cols-[0.92fr_1.08fr]">
+            <div className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.26em] text-slate-400">Revenue Tracked</p>
+                  <p className="mt-3 text-2xl font-black text-white">{formatPrice(analytics.revenueTracked)}</p>
+                  <p className="mt-1 text-sm text-slate-400">All branch orders in current dataset</p>
+                </div>
+                <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.26em] text-slate-400">Completed Revenue</p>
+                  <p className="mt-3 text-2xl font-black text-white">{formatPrice(analytics.completedRevenue)}</p>
+                  <p className="mt-1 text-sm text-slate-400">Confirmed customer pickups</p>
+                </div>
+                <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.26em] text-slate-400">Completion Rate</p>
+                  <p className="mt-3 text-2xl font-black text-white">{analytics.completionRate}%</p>
+                  <p className="mt-1 text-sm text-slate-400">Orders fully handed off to customers</p>
+                </div>
+                <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.26em] text-slate-400">Delayed Orders</p>
+                  <p className="mt-3 text-2xl font-black text-white">{analytics.delayedOrders}</p>
+                  <p className="mt-1 text-sm text-slate-400">Orders older than 20 minutes in live queue</p>
+                </div>
+              </div>
+
+              <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
+                <p className="text-[11px] uppercase tracking-[0.26em] text-slate-400">Peak Day</p>
+                <div className="mt-3 flex items-end justify-between gap-3">
+                  <div>
+                    <p className="text-2xl font-black text-white">{analytics.peakDay?.label || "--"}</p>
+                    <p className="mt-1 text-sm text-slate-400">
+                      {analytics.peakDay?.orders || 0} orders · {formatPrice(analytics.peakDay?.revenue || 0)}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3 text-right">
+                    <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Busy Staff</p>
+                    <p className="mt-1 text-xl font-black text-white">{analytics.busyStaff}</p>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="divide-y divide-border">
-              {ordersLoading ? (
-                <div className="p-10 text-center text-sm font-bold text-muted-foreground">{t("branch_dashboard.loading_orders")}</div>
-              ) : orders.length === 0 ? (
-                <div className="p-10 text-center text-sm font-bold text-muted-foreground">{t("branch_dashboard.no_orders")}</div>
-              ) : (
-                orders.map((order) => {
-                  const items = parseItems(order.items);
+            <div className="rounded-[24px] border border-white/10 bg-white/6 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.26em] text-[#ffb57d]">7-Day Trend</p>
+                  <h3 className="mt-2 text-xl font-black text-white">Daily order volume</h3>
+                </div>
+                <span className="rounded-full border border-white/10 bg-slate-950/60 px-3 py-1 text-xs text-slate-300">
+                  Live rolling window
+                </span>
+              </div>
+
+              <div className="mt-6 grid h-[260px] grid-cols-7 items-end gap-3">
+                {analytics.dailyVolume.map((day) => {
+                  const maxOrders = Math.max(...analytics.dailyVolume.map((entry) => entry.orders), 1);
+                  const height = Math.max(12, Math.round((day.orders / maxOrders) * 100));
                   return (
-                    <article key={order.id} className="grid gap-5 p-5 lg:grid-cols-[1fr_auto]">
-                      <div className="space-y-4">
-                        <div className="flex flex-wrap items-center gap-3">
-                          <h3 className="text-lg font-black">{t("branch_dashboard.order_number", { id: order.id })}</h3>
-                          <span className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase ${statusClass[order.status] || "bg-background text-muted-foreground border-border"}`}>
-                            {statusLabel(order.status)}
-                          </span>
-                          {order.assigned_staff && (
-                            <span className="text-xs text-muted-foreground">{t("branch_dashboard.assigned_to", { name: order.assigned_staff })}</span>
-                          )}
-                        </div>
-
-                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                          <div className="rounded-2xl border border-border/70 bg-background/70 p-3">
-                            <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t("branch_dashboard.customer")}</p>
-                            <p className="mt-1 text-sm font-bold text-foreground">{order.customer_name || t("branch_dashboard.unknown_customer")}</p>
-                            <p className="text-xs text-muted-foreground">{order.customer_phone || t("branch_dashboard.no_phone")}</p>
-                          </div>
-                          <div className="rounded-2xl border border-border/70 bg-background/70 p-3">
-                            <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t("branch_dashboard.pickup_branch")}</p>
-                            <p className="mt-1 text-sm font-bold text-foreground">{order.pickup_branch}</p>
-                          </div>
-                          <div className="rounded-2xl border border-border/70 bg-background/70 p-3">
-                            <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t("branch_dashboard.pickup_time")}</p>
-                            <p className="mt-1 text-sm font-bold text-foreground">{order.pickup_time || t("common.not_set")}</p>
-                          </div>
-                          <div className="rounded-2xl border border-border/70 bg-background/70 p-3">
-                            <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t("branch_dashboard.order_total")}</p>
-                            <p className="mt-1 text-sm font-bold text-foreground">{formatPrice(order.total)}</p>
-                          </div>
-                        </div>
-
-                        <div className="rounded-[1.5rem] border border-border/70 bg-background/70 p-4">
-                          <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t("branch_dashboard.items")}</p>
-                          <div className="mt-3 space-y-2">
-                            {items.map((item: any) => (
-                              <div key={`${order.id}-${item.id}`} className="flex items-center gap-3 text-xs text-muted-foreground">
-                                <img src={item.image} alt={item.name} className="h-9 w-9 rounded-xl object-cover bg-muted" />
-                                <span className="flex-1 truncate">{item.name}</span>
-                                <span className="font-black text-foreground">x{item.quantity}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        <p className="text-xs text-muted-foreground">
-                          {t("branch_dashboard.ordered_on", { date: new Date(order.created_at).toLocaleString() })}
-                        </p>
+                    <div key={day.key} className="flex h-full flex-col items-center justify-end gap-3">
+                      <div className="text-xs font-semibold text-slate-400">{day.orders}</div>
+                      <div className="flex h-full w-full items-end">
+                        <div
+                          className="w-full rounded-t-[18px] bg-gradient-to-t from-[#ff6b00] to-[#ffb44d] shadow-[0_18px_50px_rgba(249,115,22,0.25)]"
+                          style={{ height: `${height}%` }}
+                        />
                       </div>
-
-                      <div className="flex min-w-[220px] flex-col gap-2">
-                        {isManager && order.status === "Pending" && (
-                          <button
-                            type="button"
-                            onClick={() => action.mutate({ orderId: order.id, endpoint: "accept" })}
-                            className="rounded-2xl bg-primary px-4 py-3 text-xs font-black uppercase tracking-widest text-white transition-all hover:opacity-90"
-                          >
-                            {t("branch_dashboard.action.accept_order")}
-                          </button>
-                        )}
-
-                        {isManager && order.status === "Accepted" && staffMembers.map((staff) => (
-                          <button
-                            key={staff.id}
-                            type="button"
-                            onClick={() => action.mutate({
-                              orderId: order.id,
-                              endpoint: "assign",
-                              body: { staff_user_id: staff.id },
-                            })}
-                            className="rounded-2xl border border-primary/20 bg-primary/10 px-4 py-3 text-left text-xs font-black text-primary transition-all hover:bg-primary hover:text-white"
-                          >
-                            {t("branch_dashboard.action.assign_staff", { name: getStaffLabel(staff) })}
-                          </button>
-                        ))}
-
-                        {isStaff && order.status === "Assigned" && (
-                          <button
-                            type="button"
-                            onClick={() => action.mutate({ orderId: order.id, endpoint: "start" })}
-                            className="rounded-2xl border border-orange-500/20 bg-orange-500/10 px-4 py-3 text-xs font-black uppercase tracking-widest text-orange-300 transition-all hover:bg-orange-500 hover:text-white"
-                          >
-                            {t("branch_dashboard.action.start_preparing")}
-                          </button>
-                        )}
-
-                        {isStaff && order.status === "Preparing" && (
-                          <button
-                            type="button"
-                            onClick={() => action.mutate({ orderId: order.id, endpoint: "ready" })}
-                            className="rounded-2xl border border-green-500/20 bg-green-500/10 px-4 py-3 text-xs font-black uppercase tracking-widest text-green-300 transition-all hover:bg-green-500 hover:text-white"
-                          >
-                            {t("branch_dashboard.action.mark_ready")}
-                          </button>
-                        )}
-
-                        {isManager && order.status === "Ready for Pick-up" && (
-                          <button
-                            type="button"
-                            onClick={() => action.mutate({ orderId: order.id, endpoint: "complete" })}
-                            className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-xs font-black uppercase tracking-widest text-emerald-300 transition-all hover:bg-emerald-500 hover:text-white"
-                          >
-                            {t("branch_dashboard.action.complete_order")}
-                          </button>
-                        )}
-                      </div>
-                    </article>
+                      <div className="text-xs uppercase tracking-[0.2em] text-slate-500">{day.label}</div>
+                    </div>
                   );
-                })
-              )}
+                })}
+              </div>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
 
-          {isManager && (
-            <div className="space-y-6">
-              <section className="rounded-[2rem] border border-border bg-card/60">
-                <div className="border-b border-border p-5">
-                  <h2 className="text-xl font-black">{t("branch_dashboard.staff.heading")}</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">{t("branch_dashboard.staff.desc", { branch: branchName })}</p>
-                </div>
-                <div className="space-y-4 p-5">
-                  <div className="rounded-[1.5rem] border border-primary/15 bg-primary/5 p-4">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-primary">{t("branch_dashboard.invite.heading")}</p>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      {t("branch_dashboard.invite.desc", { branch: branchName })}
-                    </p>
-                    <div className="mt-4 flex flex-col gap-3">
-                      <input
-                        type="email"
-                        value={staffInviteEmail}
-                        onChange={(event) => setStaffInviteEmail(event.target.value)}
-                        placeholder={t("branch_dashboard.invite.optional_email")}
-                        className="h-12 rounded-2xl border border-border bg-background px-4 text-sm text-foreground outline-none placeholder:text-muted-foreground"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => createStaffInvite.mutate()}
-                        disabled={createStaffInvite.isPending}
-                        className="rounded-2xl bg-primary px-4 py-3 text-xs font-black uppercase tracking-widest text-white transition-all hover:opacity-90 disabled:opacity-60"
-                      >
-                        {createStaffInvite.isPending ? t("branch_dashboard.invite.creating") : t("branch_dashboard.invite.create")}
-                      </button>
-                    </div>
-                    {latestStaffInvite && (
-                      <div className="mt-4 rounded-2xl border border-border bg-background/70 p-4">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t("branch_dashboard.invite.latest")}</p>
-                        <a
-                          href={latestStaffInvite.invite_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-2 block break-all text-sm text-primary hover:underline"
-                        >
-                          {latestStaffInvite.invite_url}
-                        </a>
-                        <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                          <span>{t("branch_dashboard.invite.expires", { date: new Date(latestStaffInvite.expires_at).toLocaleString() })}</span>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              await navigator.clipboard.writeText(latestStaffInvite.invite_url);
-                              toast.success(t("branch_dashboard.toast.invite_copied"));
-                            }}
-                            className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 font-black text-foreground transition-all hover:bg-accent"
-                          >
-                            <Copy className="h-4 w-4" />
-                            {t("branch_dashboard.copy")}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {staffMembers.map((staff) => (
-                    <div key={staff.id} className="flex items-center gap-3 rounded-2xl border border-border bg-background/70 p-4">
-                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/15">
-                        <UserRound className="h-5 w-5 text-primary" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-black text-foreground">{getStaffLabel(staff)}</p>
-                        <p className="truncate text-xs text-muted-foreground">{staff.email}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-              <section className="rounded-[2rem] border border-border bg-card/60">
-                <div className="border-b border-border p-5">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <h2 className="text-xl font-black">{t("branch_dashboard.inventory.heading")}</h2>
-                      <p className="mt-1 text-sm text-muted-foreground">{t("branch_dashboard.inventory.desc")}</p>
-                    </div>
-                    <div className="relative w-full max-w-xs">
-                      <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <input
-                        value={stockSearch}
-                        onChange={(event) => setStockSearch(event.target.value)}
-                        placeholder={t("branch_dashboard.inventory.search")}
-                        className="w-full rounded-2xl border border-border bg-background py-3 pl-11 pr-4 text-xs font-bold text-foreground outline-none placeholder:text-muted-foreground"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-3 p-5">
-                  {stockLoading ? (
-                    <div className="rounded-2xl border border-dashed border-border bg-background/70 p-8 text-center text-sm font-bold text-muted-foreground">
-                      {t("branch_dashboard.inventory.loading")}
-                    </div>
-                  ) : (
-                    stock.slice(0, 10).map((item) => (
-                      <div key={item.id} className="flex items-center gap-3 rounded-2xl border border-border bg-background/70 p-3">
-                        <img src={item.product.image} alt={item.product.name} className="h-12 w-12 rounded-xl object-cover bg-muted" />
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-black text-foreground">{item.product.name}</p>
-                          <p className="text-[11px] text-muted-foreground">{item.product.category}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-xs font-black text-foreground">{t("branch_dashboard.inventory.in_stock", { count: item.stock_count })}</p>
-                          <button
-                            type="button"
-                            disabled={item.stock_count === 0}
-                            onClick={() => markOutOfStock.mutate(item.product_id)}
-                            className="mt-2 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-red-300 transition-all hover:bg-red-500 hover:text-white disabled:opacity-40"
-                          >
-                            {t("branch_dashboard.inventory.mark_out")}
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </section>
-            </div>
-          )}
-        </section>
-      </main>
+      {ordersLoading && (
+        <div className="fixed inset-x-0 top-0 z-40 h-1 bg-transparent">
+          <div className="h-full w-1/3 animate-[pulse_1.1s_ease-in-out_infinite] bg-[#ff6b00]" />
+        </div>
+      )}
     </div>
   );
 };

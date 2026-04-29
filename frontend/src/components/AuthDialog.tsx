@@ -6,7 +6,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { Eye, EyeOff, Mail, Lock, User, ShoppingBag, ArrowRight, CheckCircle2, Phone, LucideIcon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { getRoleDashboardPath, type UserRole } from "@/lib/auth";
-import { readErrorMessage } from "@/lib/api";
+import { readErrorMessage, readJsonResponse } from "@/lib/api";
 import { useLanguage } from "@/contexts/LanguageContext";
 import GoogleAuthButton from "@/components/GoogleAuthButton";
 
@@ -172,7 +172,7 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
         body: JSON.stringify({ email, password: pwd, role: selectedRole }),
       });
       if (!res.ok) throw new Error(await readErrorMessage(res, "Login failed"));
-      const data = await res.json();
+      const data = await readJsonResponse(res, "Login failed: server returned an empty response.");
       setNeedsVerificationEmail(false);
       const loggedInUser = await login(data);
       toast({ title: t("auth.toast.welcome_back"), description: t("auth.toast.logged_in_as", { email }) });
@@ -207,7 +207,7 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
         body: JSON.stringify({ email })
       });
       if (!res.ok) throw new Error(await readErrorMessage(res, "Could not resend verification email"));
-      const data = await res.json();
+      const data = await readJsonResponse(res, "Verification email response was empty.");
       setSuccessInfo({
         title: t("auth.success.verification_link_sent"),
         message: data.dev_link
@@ -237,7 +237,7 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
         body: JSON.stringify({ email, phone, password: pwd, first_name: firstName, last_name: lastName }) 
       });
       if (!res.ok) throw new Error(await readErrorMessage(res, "Signup failed"));
-      const data = await res.json();
+      const data = await readJsonResponse(res, "Signup failed: server returned an empty response.");
       setSuccessInfo({
         title: t("auth.success.check_email"),
         message: data.dev_link
@@ -255,7 +255,7 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ isOpen, onClose }) => {
     try {
       const res = await fetch("/api/auth/forgot-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
       if (!res.ok) throw new Error(await readErrorMessage(res, "Request failed"));
-      const data = await res.json();
+      const data = await readJsonResponse(res, "Password reset request returned an empty response.");
       setSuccessInfo({
         title: t("auth.success.reset_link_sent"),
         message: data.dev_link

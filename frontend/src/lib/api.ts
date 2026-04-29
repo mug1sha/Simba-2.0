@@ -24,3 +24,16 @@ export const readErrorMessage = async (response: Response, fallback = "Request f
   const data = await response.json().catch(() => null);
   return extractErrorMessage(data, fallback);
 };
+
+export const readJsonResponse = async <T>(response: Response, fallback = "Server returned an invalid response") => {
+  const text = await response.text().catch(() => "");
+  if (!text.trim()) {
+    throw new Error(fallback);
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(fallback);
+  }
+};

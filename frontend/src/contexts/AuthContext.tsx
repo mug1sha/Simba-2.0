@@ -70,6 +70,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [logout]);
 
   const login = useCallback(async (payload: LoginPayload) => {
+    if (!payload?.access_token) {
+      throw new Error("Login response is missing an access token.");
+    }
     localStorage.setItem("token", payload.access_token);
     setToken(payload.access_token);
     if (payload.user) {

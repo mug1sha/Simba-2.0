@@ -9,6 +9,7 @@ backend/.env
 backend/dev_mailbox.log
 backend/simba.db
 backend/*.db
+backend/*.startup.lock
 backend/app/__pycache__/
 backend/**/__pycache__/
 
